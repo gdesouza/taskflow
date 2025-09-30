@@ -3,9 +3,13 @@ package task
 import (
 	"fmt"
 	"os"
-	"golang.org/x/term"
-	"github.com/spf13/cobra"
+	"taskflow/internal/config"
+
+	"taskflow/internal/storage"
+
 	"github.com/manifoldco/promptui"
+	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 // clearScreen clears the terminal screen (cross-platform)
@@ -56,6 +60,13 @@ var InteractiveCmd = &cobra.Command{
 	Aliases: []string{"i"},
 	Short:   "Start interactive task management mode",
 	Run: func(cmd *cobra.Command, args []string) {
+		storagePath := config.GetStoragePath()
+		s, err := storage.NewStorage(storagePath)
+		if err != nil {
+			fmt.Printf("Error creating storage: %v\n", err)
+			return
+		}
+
 		clearScreen()
 		fmt.Println("🚀 Welcome to TaskFlow Interactive Mode\n")
 		for {
@@ -67,13 +78,17 @@ var InteractiveCmd = &cobra.Command{
 			clearScreen()
 			switch action {
 			case "list":
-				fmt.Println("[List tasks placeholder]")
+				listTasks(s)
+			case "add":
+				addTask(s)
 			case "done":
-				fmt.Println("[Mark tasks as done placeholder]")
-			case "filter":
-				fmt.Println("[Filter tasks placeholder]")
+				doneTask(s)
+			case "edit":
+				editTask(s)
+			case "search":
+				searchTask(s)
 			case "stats":
-				fmt.Println("[View statistics placeholder]")
+				showStats(s)
 			case "quit":
 				clearScreen()
 				fmt.Println("👋 Goodbye!")
@@ -92,8 +107,10 @@ func showMainMenu() (string, error) {
 		Label: "What would you like to do? (Ctrl+C to quit)",
 		Items: []string{
 			"📋 List tasks",
+			"➕ Add task",
 			"✅ Mark tasks as done",
-			"🔍 Filter tasks",
+			"✏️ Edit task",
+			"🔍 Search tasks",
 			"📊 View statistics",
 			"🚪 Quit",
 		},
@@ -105,6 +122,67 @@ func showMainMenu() (string, error) {
 	if err != nil {
 		return "quit", nil
 	}
-	actions := []string{"list", "done", "filter", "stats", "quit"}
+	actions := []string{"list", "add", "done", "edit", "search", "stats", "quit"}
 	return actions[index], nil
+}
+
+func listTasks(s *storage.Storage) {
+	tasks, err := s.ReadTasks()
+	if err != nil {
+		fmt.Printf("Error reading tasks: %v\n", err)
+		return
+	}
+
+	if len(tasks) == 0 {
+		fmt.Println("No tasks found.")
+		return
+	}
+
+	for _, task := range tasks {
+		status := " "
+		if task.Completed {
+			status = "x"
+		}
+		fmt.Printf("[%s] %s\n", status, task.Title)
+	}
+}
+
+func addTask(s *storage.Storage) {
+	prompt := promptui.Prompt{
+		Label: "Task title",
+	}
+
+	title, err := prompt.Run()
+	if err != nil {
+		fmt.Printf("Prompt failed %v\n", err)
+		return
+	}
+
+	AddCmd.Run(AddCmd, []string{title})
+}
+
+func doneTask(s *storage.Storage) {
+	DoneCmd.Run(DoneCmd, []string{})
+}
+
+func editTask(s *storage.Storage) {
+	EditCmd.Run(EditCmd, []string{})
+}
+
+func searchTask(s *storage.Storage) {
+	prompt := promptui.Prompt{
+		Label: "Search query",
+	}
+
+	query, err := prompt.Run()
+	if err != nil {
+		fmt.Printf("Prompt failed %v\n", err)
+		return
+	}
+
+	SearchCmd.Run(SearchCmd, []string{query})
+}
+
+func showStats(s *storage.Storage) {
+	StatsCmd.Run(StatsCmd, []string{})
 }
