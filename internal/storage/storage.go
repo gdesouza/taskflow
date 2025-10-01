@@ -68,7 +68,11 @@ func (s *Storage) WriteTasks(tasks []models.Task) error {
 		return tasks[i].ID < tasks[j].ID
 	})
 
-	data, err := yaml.Marshal(tasks)
+	taskList := models.TaskList{
+		Tasks: tasks,
+	}
+
+	data, err := yaml.Marshal(taskList)
 	if err != nil {
 		return fmt.Errorf("failed to marshal tasks: %w", err)
 	}
