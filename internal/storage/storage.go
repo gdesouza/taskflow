@@ -82,12 +82,7 @@ func (s *Storage) WriteTasks(tasks []models.Task) error {
 }
 
 // UpdateTask updates a single task in the YAML file.
-func (s *Storage) UpdateTask(updatedTask models.Task) error {
-	tasks, err := s.ReadTasks()
-	if err != nil {
-		return err
-	}
-
+func (s *Storage) UpdateTask(tasks []models.Task, updatedTask models.Task) error {
 	for i, task := range tasks {
 		if task.ID == updatedTask.ID {
 			tasks[i] = updatedTask
