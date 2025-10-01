@@ -193,7 +193,7 @@ func listTasks(s *storage.Storage) {
 				selectedIndex++
 			}
 		case keyboard.KeyEnter:
-			showTaskDetails(tasks[selectedIndex])
+			showTaskDetails(s, &tasks[selectedIndex])
 			if err := keyboard.Open(); err != nil {
 				panic(err)
 			}
@@ -217,34 +217,121 @@ func listTasks(s *storage.Storage) {
 	}
 }
 
-func showTaskDetails(task models.Task) {
-	clearScreen()
-	fmt.Printf("Task Details (press 'q' or Esc to return)\n\n")
-	id, _ := strconv.Atoi(task.ID)
-	fmt.Printf("ID: %d\n", id)
-	fmt.Printf("Title: %s\n", task.Title)
-	fmt.Printf("Status: %s\n", task.Status)
-	fmt.Printf("Priority: %s\n", task.Priority)
-	if task.Link != "" {
-		fmt.Printf("Link: %s\n", task.Link)
-	}
-	if len(task.Tags) > 0 {
-		fmt.Printf("Tags: %s\n", strings.Join(task.Tags, ", "))
-	}
-	if task.Notes != "" {
-		fmt.Printf("Notes: %s\n", task.Notes)
-	}
+func showTaskDetails(s *storage.Storage, task *models.Task) {
+	fields := []string{"Title", "Status", "Priority", "Link", "Tags", "Notes"}
+	selectedIndex := 0
 
 	for {
+		clearScreen()
+		fmt.Printf("Task Details (use arrow keys to navigate, Enter to edit, 'q' or Esc to return)\n\n")
+		id, _ := strconv.Atoi(task.ID)
+
+		for i, field := range fields {
+			var value string
+			switch field {
+			case "Title":
+				value = task.Title
+			case "Status":
+				value = task.Status
+			case "Priority":
+				value = task.Priority
+			case "Link":
+				value = task.Link
+			case "Tags":
+				value = strings.Join(task.Tags, ", ")
+			case "Notes":
+				value = task.Notes
+			}
+
+			line := fmt.Sprintf("%s: %s", field, value)
+			if i == selectedIndex {
+				fmt.Println("[7m" + line + "[0m")
+			} else {
+				fmt.Println(line)
+			}
+		}
+		fmt.Printf("\nID: %d\n", id)
+
 		char, key, err := keyboard.GetKey()
 		if err != nil {
 			panic(err)
 		}
-		if key == keyboard.KeyEsc || char == 'q' {
+
+		switch key {
+		case keyboard.KeyArrowUp:
+			if selectedIndex > 0 {
+				selectedIndex--
+			}
+		case keyboard.KeyArrowDown:
+			if selectedIndex < len(fields)-1 {
+				selectedIndex++
+			}
+		case keyboard.KeyEnter:
+			keyboard.Close() // Close keyboard before showing prompt
+			newValue := promptForValue(fields[selectedIndex], getFieldValue(task, fields[selectedIndex]))
+			setFieldValue(task, fields[selectedIndex], newValue)
+			s.UpdateTask(*task)
+			if err := keyboard.Open(); err != nil {
+				panic(err)
+			}
+		case keyboard.KeyEsc:
+			return
+		}
+
+		if char == 'q' {
 			return
 		}
 	}
 }
+
+func getFieldValue(task *models.Task, field string) string {
+	switch field {
+	case "Title":
+		return task.Title
+	case "Status":
+		return task.Status
+	case "Priority":
+		return task.Priority
+	case "Link":
+		return task.Link
+	case "Tags":
+		return strings.Join(task.Tags, ", ")
+	case "Notes":
+		return task.Notes
+	}
+	return ""
+}
+
+func setFieldValue(task *models.Task, field, value string) {
+	switch field {
+	case "Title":
+		task.Title = value
+	case "Status":
+		task.Status = value
+	case "Priority":
+		task.Priority = value
+	case "Link":
+		task.Link = value
+	case "Tags":
+		task.Tags = strings.Split(value, ",")
+	case "Notes":
+		task.Notes = value
+	}
+}
+
+func promptForValue(field, defaultValue string) string {
+	prompt := promptui.Prompt{
+		Label:   fmt.Sprintf("Enter new %s", field),
+		Default: defaultValue,
+	}
+
+	result, err := prompt.Run()
+	if err != nil {
+		return defaultValue
+	}
+	return result
+}
+
 
 func addTask(s *storage.Storage) {
 	prompt := promptui.Prompt{
