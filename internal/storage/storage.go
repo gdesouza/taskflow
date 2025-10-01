@@ -1,4 +1,3 @@
-
 package storage
 
 import (
@@ -78,6 +77,23 @@ func (s *Storage) WriteTasks(tasks []models.Task) error {
 		return fmt.Errorf("failed to write tasks file: %w", err)
 	}
 	return nil
+}
+
+// UpdateTask updates a single task in the YAML file.
+func (s *Storage) UpdateTask(updatedTask models.Task) error {
+	tasks, err := s.ReadTasks()
+	if err != nil {
+		return err
+	}
+
+	for i, task := range tasks {
+		if task.ID == updatedTask.ID {
+			tasks[i] = updatedTask
+			break
+		}
+	}
+
+	return s.WriteTasks(tasks)
 }
 
 // Backup creates a backup of the current tasks file.
