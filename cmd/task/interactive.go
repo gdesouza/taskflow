@@ -215,7 +215,7 @@ func listTasks(s *storage.Storage) {
 			}
 		case keyboard.KeyEnter:
 			if len(tasks) > 0 {
-				showTaskDetails(s, tasks, &tasks[selectedIndex])
+				showTaskDetails(s, originalTasks, &tasks[selectedIndex])
 				if err := keyboard.Open(); err != nil {
 					panic(err)
 				}
@@ -236,7 +236,7 @@ func listTasks(s *storage.Storage) {
 				} else {
 					task.Status = "done"
 				}
-				s.UpdateTask(tasks, *task)
+				s.UpdateTask(originalTasks, *task)
 			}
 		}
 
@@ -336,7 +336,7 @@ func sortTasks(tasks []models.Task) []models.Task {
 	return tasks
 }
 
-func showTaskDetails(s *storage.Storage, tasks []models.Task, task *models.Task) {
+func showTaskDetails(s *storage.Storage, originalTasks []models.Task, task *models.Task) {
 	fields := []string{"Title", "Status", "Priority", "Link", "Tags", "Notes"}
 	selectedIndex := 0
 
@@ -389,7 +389,7 @@ func showTaskDetails(s *storage.Storage, tasks []models.Task, task *models.Task)
 			keyboard.Close() // Close keyboard before showing prompt
 			newValue := promptForValue(fields[selectedIndex], getFieldValue(task, fields[selectedIndex]))
 			setFieldValue(task, fields[selectedIndex], newValue)
-			s.UpdateTask(tasks, *task)
+			s.UpdateTask(originalTasks, *task)
 			if err := keyboard.Open(); err != nil {
 				panic(err)
 			}
