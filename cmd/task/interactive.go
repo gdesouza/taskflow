@@ -55,8 +55,7 @@ var InteractiveCmd = &cobra.Command{
 			return
 		}
 
-		clearScreen()
-		fmt.Println("🚀 Welcome to TaskFlow Interactive Mode\n")
+		fmt.Println("🚀 Welcome to TaskFlow Interactive Mode")
 		for {
 			action, err := showMainMenu()
 			if err != nil {
@@ -85,7 +84,7 @@ var InteractiveCmd = &cobra.Command{
 				fmt.Scanln()
 			}
 			clearScreen()
-			fmt.Println("🚀 Welcome to TaskFlow Interactive Mode\n")
+			fmt.Println("🚀 Welcome to TaskFlow Interactive Mode")
 		}
 	},
 }
