@@ -11,6 +11,7 @@ import (
 	"taskflow/internal/storage"
 
 	"github.com/eiannone/keyboard"
+	"github.com/google/uuid"
 	"github.com/manifoldco/promptui"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -165,7 +166,7 @@ func listTasks(s *storage.Storage) {
 	for {
 		clearScreen()
 		width, height := getTerminalSize()
-		fmt.Println("Tasks (use arrow keys to navigate, Enter to view details, 'x' to mark done, 'f' to filter, 's' to sort, 'q' to quit)")
+		fmt.Println("Tasks (use arrow keys to navigate, Enter to view details, 'a' to add, 'x' to toggle done, 'f' to filter, 's' to sort, 'q' to quit)")
 
 		// Adjust startIndex if selectedIndex is out of view
 		if selectedIndex < startIndex {
@@ -259,7 +260,114 @@ func listTasks(s *storage.Storage) {
 				panic(err)
 			}
 		}
+
+		if char == 'a' {
+			keyboard.Close()
+			newTask, ok := interactiveCreateTask(s)
+			if ok {
+				// Reload tasks from storage to ensure consistency
+				updated, err := s.ReadTasks()
+				if err == nil {
+					tasks = updated
+					originalTasks = make([]models.Task, len(tasks))
+					copy(originalTasks, tasks)
+					// Find index of new task
+					for i, t := range tasks {
+						if t.ID == newTask.ID {
+							selectedIndex = i
+							break
+						}
+					}
+					// Adjust startIndex if needed
+					if selectedIndex < startIndex {
+						startIndex = selectedIndex
+					}
+					width, height := getTerminalSize()
+					_ = width
+					if selectedIndex >= startIndex+height-2 {
+						startIndex = selectedIndex - height + 3
+						if startIndex < 0 {
+							startIndex = 0
+						}
+					}
+				}
+			}
+			if err := keyboard.Open(); err != nil {
+				panic(err)
+			}
+		}
 	}
+}
+
+func interactiveCreateTask(s *storage.Storage) (models.Task, bool) {
+	// Title (required)
+	titlePrompt := promptui.Prompt{Label: "Title (required)"}
+	title, err := titlePrompt.Run()
+	if err != nil || strings.TrimSpace(title) == "" {
+		return models.Task{}, false
+	}
+
+	// Priority select
+	prioritySelect := promptui.Select{Label: "Priority", Items: []string{"high", "medium", "low"}, Size: 3}
+	_, priority, err := prioritySelect.Run()
+	if err != nil {
+		priority = "medium"
+	}
+
+	// Status select
+	statusSelect := promptui.Select{Label: "Status", Items: []string{"todo", "in-progress", "done"}, Size: 3}
+	_, status, err := statusSelect.Run()
+	if err != nil {
+		status = "todo"
+	}
+
+	// Link
+	linkPrompt := promptui.Prompt{Label: "Link (optional)", Default: ""}
+	link, _ := linkPrompt.Run()
+
+	// Tags
+	tagsPrompt := promptui.Prompt{Label: "Tags (comma separated, optional)", Default: ""}
+	tagsStr, _ := tagsPrompt.Run()
+	var tags []string
+	for _, t := range strings.Split(tagsStr, ",") {
+		trimmed := strings.TrimSpace(t)
+		if trimmed != "" {
+			tags = append(tags, trimmed)
+		}
+	}
+
+	// Notes
+	notesPrompt := promptui.Prompt{Label: "Notes (optional)", Default: ""}
+	notes, _ := notesPrompt.Run()
+
+	// Due date
+	duePrompt := promptui.Prompt{Label: "Due date (RFC3339, optional)", Default: ""}
+	due, _ := duePrompt.Run()
+
+	newTask := models.Task{
+		ID:       uuid.New().String(),
+		Title:    title,
+		Status:   status,
+		Priority: priority,
+		Link:     link,
+		Tags:     tags,
+		Notes:    notes,
+		DueDate:  due,
+	}
+
+	tasks, err := s.ReadTasks()
+	if err != nil {
+		fmt.Printf("Error reading tasks: %v\n", err)
+		return models.Task{}, false
+	}
+	tasks = append(tasks, newTask)
+	if err := s.WriteTasks(tasks); err != nil {
+		fmt.Printf("Error writing tasks: %v\n", err)
+		return models.Task{}, false
+	}
+
+	fmt.Printf("Added task: %s\n", newTask.Title)
+	return newTask, true
 }
 
 func filterTasks(tasks []models.Task) []models.Task {
@@ -450,7 +558,6 @@ func promptForValue(field, defaultValue string) string {
 	}
 	return result
 }
-
 
 func addTask(s *storage.Storage) {
 	prompt := promptui.Prompt{
