@@ -126,16 +126,8 @@ func listTasks(s *storage.Storage) {
 		return
 	}
 
-	if len(tasks) == 0 {
-		fmt.Println("No tasks found.")
-		return
-	}
-
-	sort.Slice(tasks, func(i, j int) bool {
-		iID, _ := strconv.Atoi(tasks[i].ID)
-		jID, _ := strconv.Atoi(tasks[j].ID)
-		return iID < jID
-	})
+	originalTasks := make([]models.Task, len(tasks))
+	copy(originalTasks, tasks)
 
 	selectedIndex := 0
 	startIndex := 0
@@ -148,7 +140,7 @@ func listTasks(s *storage.Storage) {
 	for {
 		clearScreen()
 		width, height := getTerminalSize()
-		fmt.Println("Tasks (use arrow keys to navigate, Enter to view details, 'x' to mark done, 'q' to quit)")
+		fmt.Println("Tasks (use arrow keys to navigate, Enter to view details, 'x' to mark done, 'f' to filter, 's' to sort, 'q' to quit)")
 
 		// Adjust startIndex if selectedIndex is out of view
 		if selectedIndex < startIndex {
@@ -163,18 +155,22 @@ func listTasks(s *storage.Storage) {
 			endIndex = len(tasks)
 		}
 
-		for i := startIndex; i < endIndex; i++ {
-			task := tasks[i]
-			status := " "
-			if task.Status == "done" {
-				status = "x"
-			}
-			line := fmt.Sprintf("[%s] (%s) %s", status, task.Priority, task.Title)
-			line = truncateText(line, width)
-			if i == selectedIndex {
-				fmt.Println("\033[7m" + line + "\033[0m")
-			} else {
-				fmt.Println(line)
+		if len(tasks) == 0 {
+			fmt.Println("No tasks found.")
+		} else {
+			for i := startIndex; i < endIndex; i++ {
+				task := tasks[i]
+				status := " "
+				if task.Status == "done" {
+					status = "x"
+				}
+				line := fmt.Sprintf("[%s] (%s) %s", status, task.Priority, task.Title)
+				line = truncateText(line, width)
+				if i == selectedIndex {
+					fmt.Println("\033[7m" + line + "\033[0m")
+				} else {
+					fmt.Println(line)
+				}
 			}
 		}
 
@@ -193,9 +189,11 @@ func listTasks(s *storage.Storage) {
 				selectedIndex++
 			}
 		case keyboard.KeyEnter:
-			showTaskDetails(s, &tasks[selectedIndex])
-			if err := keyboard.Open(); err != nil {
-				panic(err)
+			if len(tasks) > 0 {
+				showTaskDetails(s, &tasks[selectedIndex])
+				if err := keyboard.Open(); err != nil {
+					panic(err)
+				}
 			}
 		case keyboard.KeyEsc:
 			return
@@ -206,15 +204,111 @@ func listTasks(s *storage.Storage) {
 		}
 
 		if char == 'x' {
-			task := &tasks[selectedIndex]
-			if task.Status == "done" {
-				task.Status = "todo"
-			} else {
-				task.Status = "done"
+			if len(tasks) > 0 {
+				task := &tasks[selectedIndex]
+				if task.Status == "done" {
+					task.Status = "todo"
+				} else {
+					task.Status = "done"
+				}
+				s.UpdateTask(*task)
 			}
-			s.UpdateTask(*task)
+		}
+
+		if char == 'f' {
+			keyboard.Close()
+			tasks = filterTasks(originalTasks)
+			selectedIndex = 0
+			startIndex = 0
+			if err := keyboard.Open(); err != nil {
+				panic(err)
+			}
+		}
+
+		if char == 's' {
+			keyboard.Close()
+			tasks = sortTasks(tasks)
+			selectedIndex = 0
+			startIndex = 0
+			if err := keyboard.Open(); err != nil {
+				panic(err)
+			}
 		}
 	}
+}
+
+func filterTasks(tasks []models.Task) []models.Task {
+	prompt := promptui.Select{
+		Label: "Filter by",
+		Items: []string{"Status", "Priority", "Tags", "Clear Filters"},
+	}
+	_, result, err := prompt.Run()
+	if err != nil {
+		return tasks
+	}
+
+	if result == "Clear Filters" {
+		return tasks
+	}
+
+	prompt2 := promptui.Prompt{
+		Label: fmt.Sprintf("Enter %s", result),
+	}
+	value, err := prompt2.Run()
+	if err != nil {
+		return tasks
+	}
+
+	var filteredTasks []models.Task
+	for _, task := range tasks {
+		switch result {
+		case "Status":
+			if task.Status == value {
+				filteredTasks = append(filteredTasks, task)
+			}
+		case "Priority":
+			if task.Priority == value {
+				filteredTasks = append(filteredTasks, task)
+			}
+		case "Tags":
+			for _, t := range task.Tags {
+				if t == value {
+					filteredTasks = append(filteredTasks, task)
+					break
+				}
+			}
+		}
+	}
+	return filteredTasks
+}
+
+func sortTasks(tasks []models.Task) []models.Task {
+	prompt := promptui.Select{
+		Label: "Sort by",
+		Items: []string{"Priority", "Status", "Default"},
+	}
+	_, result, err := prompt.Run()
+	if err != nil {
+		return tasks
+	}
+
+	switch result {
+	case "Priority":
+		sort.Slice(tasks, func(i, j int) bool {
+			return tasks[i].Priority > tasks[j].Priority
+		})
+	case "Status":
+		sort.Slice(tasks, func(i, j int) bool {
+			return tasks[i].Status < tasks[j].Status
+		})
+	case "Default":
+		sort.Slice(tasks, func(i, j int) bool {
+			iID, _ := strconv.Atoi(tasks[i].ID)
+			jID, _ := strconv.Atoi(tasks[j].ID)
+			return iID < jID
+		})
+	}
+	return tasks
 }
 
 func showTaskDetails(s *storage.Storage, task *models.Task) {
