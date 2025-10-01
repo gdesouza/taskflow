@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"strconv"
 	"strings"
 	"taskflow/internal/config"
 	"taskflow/internal/models"
@@ -436,9 +435,7 @@ func sortTasks(tasks []models.Task) []models.Task {
 		})
 	case "Default":
 		sort.Slice(tasks, func(i, j int) bool {
-			iID, _ := strconv.Atoi(tasks[i].ID)
-			jID, _ := strconv.Atoi(tasks[j].ID)
-			return iID < jID
+			return tasks[i].ID < tasks[j].ID
 		})
 	}
 	return tasks
@@ -451,7 +448,6 @@ func showTaskDetails(s *storage.Storage, originalTasks []models.Task, task *mode
 	for {
 		clearScreen()
 		fmt.Printf("Task Details (use arrow keys to navigate, Enter to edit, 'q' or Esc to return)\n\n")
-		id, _ := strconv.Atoi(task.ID)
 
 		for i, field := range fields {
 			var value string
@@ -477,7 +473,7 @@ func showTaskDetails(s *storage.Storage, originalTasks []models.Task, task *mode
 				fmt.Println(line)
 			}
 		}
-		fmt.Printf("\nID: %d\n", id)
+		fmt.Printf("\nID: %s\n", task.ID)
 
 		char, key, err := keyboard.GetKey()
 		if err != nil {
