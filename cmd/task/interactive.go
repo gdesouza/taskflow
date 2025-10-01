@@ -57,7 +57,7 @@ var InteractiveCmd = &cobra.Command{
 
 		fmt.Println("🚀 Welcome to TaskFlow Interactive Mode")
 		for {
-			action, err := showMainMenu()
+			action, err := showMainMenuCustom()
 			if err != nil {
 				fmt.Printf("Error: %v\n", err)
 				return
@@ -89,34 +89,59 @@ var InteractiveCmd = &cobra.Command{
 	},
 }
 
-func showMainMenu() (string, error) {
-	_, height := getTerminalSize()
-	size := height - 4
-	if size < 5 {
-		size = 5
-	}
-
-	prompt := promptui.Select{
-		Label: "What would you like to do? (Ctrl+C to quit)",
-		Items: []string{
-			"📋 List tasks",
-			"➕ Add task",
-			"✏️ Edit task",
-			"🔍 Search tasks",
-			"📊 View statistics",
-			"🚪 Quit",
-		},
-		Templates: &promptui.SelectTemplates{
-			Help: `{{ "Use arrow keys to navigate, Enter to select, or Ctrl+C to quit" | faint }}`,
-		},
-		Size: size,
-	}
-	index, _, err := prompt.Run()
-	if err != nil {
-		return "quit", nil
+func showMainMenuCustom() (string, error) {
+	menuItems := []string{
+		"📋 List tasks",
+		"➕ Add task",
+		"✏️ Edit task",
+		"🔍 Search tasks",
+		"📊 View statistics",
+		"🚪 Quit",
 	}
 	actions := []string{"list", "add", "edit", "search", "stats", "quit"}
-	return actions[index], nil
+	selectedIndex := 0
+
+	if err := keyboard.Open(); err != nil {
+		return "", err
+	}
+	defer keyboard.Close()
+
+	for {
+		clearScreen()
+		fmt.Println("What would you like to do? (use arrow keys to navigate, Enter to select, 'q' to quit)")
+
+		for i, item := range menuItems {
+			if i == selectedIndex {
+				fmt.Println("\033[7m" + item + "\033[0m")
+			} else {
+				fmt.Println(item)
+			}
+		}
+
+		char, key, err := keyboard.GetKey()
+		if err != nil {
+			return "", err
+		}
+
+		switch key {
+		case keyboard.KeyArrowUp:
+			if selectedIndex > 0 {
+				selectedIndex--
+			}
+		case keyboard.KeyArrowDown:
+			if selectedIndex < len(menuItems)-1 {
+				selectedIndex++
+			}
+		case keyboard.KeyEnter:
+			return actions[selectedIndex], nil
+		case keyboard.KeyEsc:
+			return "quit", nil
+		}
+
+		if char == 'q' {
+			return "quit", nil
+		}
+	}
 }
 
 func listTasks(s *storage.Storage) {
