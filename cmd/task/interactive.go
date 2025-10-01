@@ -169,7 +169,7 @@ func listTasks(s *storage.Storage) {
 			if task.Status == "done" {
 				status = "x"
 			}
-			line := fmt.Sprintf("[%s] %s", status, task.Title)
+			line := fmt.Sprintf("[%s] (%s) %s", status, task.Priority, task.Title)
 			line = truncateText(line, width)
 			if i == selectedIndex {
 				fmt.Println("\033[7m" + line + "\033[0m")
@@ -224,6 +224,7 @@ func showTaskDetails(task models.Task) {
 	fmt.Printf("ID: %d\n", id)
 	fmt.Printf("Title: %s\n", task.Title)
 	fmt.Printf("Status: %s\n", task.Status)
+	fmt.Printf("Priority: %s\n", task.Priority)
 	if task.Link != "" {
 		fmt.Printf("Link: %s\n", task.Link)
 	}
