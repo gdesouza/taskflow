@@ -7,6 +7,7 @@ import (
 	"sort"
 	"taskflow/internal/models"
 
+	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 )
 
@@ -30,11 +31,45 @@ func (s *Storage) ReadTasks() ([]models.Task, error) {
 		return nil, fmt.Errorf("failed to read tasks file: %w", err)
 	}
 
-	var tasks []models.Task
-	if err := yaml.Unmarshal(data, &tasks); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal tasks: %w", err)
+	var taskList models.TaskList
+	if err := yaml.Unmarshal(data, &taskList); err != nil {
+		// If unmarshaling into SampleTaskList fails, try unmarshaling into the old format.
+		var tasks []models.Task
+		if err2 := yaml.Unmarshal(data, &tasks); err2 != nil {
+			return nil, fmt.Errorf("failed to unmarshal tasks into new or old format: %w, %w", err, err2)
+		}
+		return tasks, nil
 	}
-	return tasks, nil
+
+	return convertSampleTasksToTasks(taskList.Tasks), nil
+}
+
+func convertSampleTasksToTasks(sampleTasks []models.SampleTask) []models.Task {
+	tasks := make([]models.Task, 0, len(sampleTasks))
+	for _, st := range sampleTasks {
+		tasks = append(tasks, models.Task{
+			ID:          uuid.New().String(),
+			Title:       st.Title,
+			Description: st.Link, // Using link as description for now
+			DueDate:     st.DueDate,
+			Completed:   st.Status == "done",
+			Priority:    convertPriority(st.Priority),
+		})
+	}
+	return tasks
+}
+
+func convertPriority(priority string) int {
+	switch priority {
+	case "high":
+		return 3
+	case "medium":
+		return 2
+	case "low":
+		return 1
+	default:
+		return 0
+	}
 }
 
 // WriteTasks writes all tasks to the YAML file.

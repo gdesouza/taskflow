@@ -21,3 +21,19 @@ type CalendarEvent struct {
 	Location    string
 	Description string
 }
+
+// TaskList represents the top-level structure of the sample tasks file.
+type TaskList struct {
+	Tasks []SampleTask `yaml:"tasks"`
+}
+
+// SampleTask represents a task from the sample file.
+type SampleTask struct {
+	Title    string   `yaml:"title"`
+	Status   string   `yaml:"status"`
+	Priority string   `yaml:"priority"`
+	Source   string   `yaml:"source"`
+	Link     string   `yaml:"link"`
+	Tags     []string `yaml:"tags"`
+	DueDate  string   `yaml:"due"`
+}
