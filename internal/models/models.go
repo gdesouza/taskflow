@@ -18,7 +18,7 @@ type TaskList struct {
 
 // Task represents a task from the sample file.
 type Task struct {
-	ID          string   `yaml:"-"`
+	ID          string   `yaml:"id"`
 	Title       string   `yaml:"title"`
 	Description string   `yaml:"description,omitempty"`
 	DueDate     string   `yaml:"due,omitempty"`
