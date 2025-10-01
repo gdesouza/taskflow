@@ -2,17 +2,6 @@ package models
 
 // Shared data models for tasks, calendar events, etc.
 
-// Task represents a single task item.
-type Task struct {
-	ID          string
-	Title       string
-	Description string
-	DueDate     string // ISO8601 format
-	Completed   bool
-	Priority    int
-}
-
-// CalendarEvent represents a calendar event.
 type CalendarEvent struct {
 	ID          string
 	Title       string
@@ -24,16 +13,20 @@ type CalendarEvent struct {
 
 // TaskList represents the top-level structure of the sample tasks file.
 type TaskList struct {
-	Tasks []SampleTask `yaml:"tasks"`
+	Tasks []Task `yaml:"tasks"`
 }
 
-// SampleTask represents a task from the sample file.
-type SampleTask struct {
-	Title    string   `yaml:"title"`
-	Status   string   `yaml:"status"`
-	Priority string   `yaml:"priority"`
-	Source   string   `yaml:"source"`
-	Link     string   `yaml:"link"`
-	Tags     []string `yaml:"tags"`
-	DueDate  string   `yaml:"due"`
+// Task represents a task from the sample file.
+type Task struct {
+	ID          string   `yaml:"-"`
+	Title       string   `yaml:"title"`
+	Description string   `yaml:"description,omitempty"`
+	DueDate     string   `yaml:"due,omitempty"`
+	Completed   bool     `yaml:"-"`
+	Status      string   `yaml:"status"`
+	Priority    string   `yaml:"priority"`
+	PriorityInt int      `yaml:"-"`
+	Source      string   `yaml:source"`
+	Link        string   `yaml:"link"`
+	Tags        []string `yaml:"tags,omitempty"`
 }

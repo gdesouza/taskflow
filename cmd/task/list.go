@@ -33,7 +33,7 @@ var ListCmd = &cobra.Command{
 
 		for _, task := range tasks {
 			status := " "
-			if task.Completed {
+			if task.Status == "done" {
 				status = "x"
 			}
 			fmt.Printf("[%s] %s\n", status, task.Title)

@@ -48,7 +48,7 @@ var PrioritizeCmd = &cobra.Command{
 				dueDate, err := time.Parse(time.RFC3339, task.DueDate)
 				if err == nil {
 					if dueDate.After(now) && dueDate.Before(in24Hours) {
-						tasks[i].Priority = 5 // Highest priority
+						tasks[i].Priority = "highest" // Highest priority
 					}
 				}
 			}
@@ -59,7 +59,7 @@ var PrioritizeCmd = &cobra.Command{
 					eventTime, err := time.Parse(time.RFC3339, event.StartTime)
 					if err == nil {
 						if eventTime.After(now) && eventTime.Before(in24Hours) {
-							tasks[i].Priority = 5 // Highest priority
+							tasks[i].Priority = "highest" // Highest priority
 						}
 					}
 				}

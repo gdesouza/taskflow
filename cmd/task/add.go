@@ -35,9 +35,11 @@ var AddCmd = &cobra.Command{
 		}
 
 		task := models.Task{
-			ID:    uuid.New().String(),
-			Title: strings.Join(args, " "),
-			DueDate: dueDate,
+			ID:       uuid.New().String(),
+			Title:    strings.Join(args, " "),
+			DueDate:  dueDate,
+			Status:   "todo",
+			Priority: "medium",
 		}
 
 		tasks = append(tasks, task)

@@ -34,7 +34,7 @@ var SearchCmd = &cobra.Command{
 		for _, task := range tasks {
 			if strings.Contains(strings.ToLower(task.Title), query) {
 				status := " "
-				if task.Completed {
+				if task.Status == "done" {
 					status = "x"
 				}
 				fmt.Printf("[%s] %s\n", status, task.Title)

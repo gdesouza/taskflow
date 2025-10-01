@@ -33,30 +33,20 @@ func (s *Storage) ReadTasks() ([]models.Task, error) {
 
 	var taskList models.TaskList
 	if err := yaml.Unmarshal(data, &taskList); err != nil {
-		// If unmarshaling into SampleTaskList fails, try unmarshaling into the old format.
-		var tasks []models.Task
-		if err2 := yaml.Unmarshal(data, &tasks); err2 != nil {
-			return nil, fmt.Errorf("failed to unmarshal tasks into new or old format: %w, %w", err, err2)
+		return nil, fmt.Errorf("failed to unmarshal tasks: %w", err)
+	}
+
+	// Populate the internal fields of Task
+	for i := range taskList.Tasks {
+		taskList.Tasks[i].ID = uuid.New().String()
+		taskList.Tasks[i].Completed = taskList.Tasks[i].Status == "done"
+		taskList.Tasks[i].PriorityInt = convertPriority(taskList.Tasks[i].Priority)
+		if taskList.Tasks[i].Description == "" {
+			taskList.Tasks[i].Description = taskList.Tasks[i].Link
 		}
-		return tasks, nil
 	}
 
-	return convertSampleTasksToTasks(taskList.Tasks), nil
-}
-
-func convertSampleTasksToTasks(sampleTasks []models.SampleTask) []models.Task {
-	tasks := make([]models.Task, 0, len(sampleTasks))
-	for _, st := range sampleTasks {
-		tasks = append(tasks, models.Task{
-			ID:          uuid.New().String(),
-			Title:       st.Title,
-			Description: st.Link, // Using link as description for now
-			DueDate:     st.DueDate,
-			Completed:   st.Status == "done",
-			Priority:    convertPriority(st.Priority),
-		})
-	}
-	return tasks
+	return taskList.Tasks, nil
 }
 
 func convertPriority(priority string) int {

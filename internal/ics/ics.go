@@ -37,7 +37,7 @@ func ParseICS(reader io.Reader, daysAhead int) ([]models.Task, error) {
 				ID:       uuid.New().String(),
 				Title:    summary,
 				DueDate:  dtstart.Format(time.RFC3339),
-				Priority: 3, // High
+				Priority: "high", // High
 			}
 			tasks = append(tasks, task)
 		}

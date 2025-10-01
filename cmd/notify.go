@@ -33,7 +33,7 @@ var notifyCmd = &cobra.Command{
 		fmt.Println("--- Upcoming Tasks ---")
 		foundUpcomingTask := false
 		for _, task := range tasks {
-			if !task.Completed && task.DueDate != "" {
+			if task.Status != "done" && task.DueDate != "" {
 				dueDate, err := time.Parse(time.RFC3339, task.DueDate)
 				if err == nil && dueDate.After(now) && dueDate.Before(in24Hours) {
 					fmt.Printf("Task: %s (Due: %s)\n", task.Title, dueDate.Format("2006-01-02 15:04"))

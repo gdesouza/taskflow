@@ -32,7 +32,7 @@ var serveCmd = &cobra.Command{
 				<h1>Task List</h1>
 				<ul>
 					{{range .}}
-						<li>{{.Title}} - {{if .Completed}}Done{{else}}Pending{{end}}</li>
+						<li>{{.Title}} - {{if eq .Status "done"}}Done{{else}}Pending{{end}}</li>
 					{{else}}
 						<li>No tasks found.</li>
 					{{end}}

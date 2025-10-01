@@ -34,7 +34,7 @@ func RenderTasks(tasks []models.Task, compact bool) {
 				t.Title,
 				t.Description,
 				t.DueDate,
-				strconv.Itoa(t.Priority),
+				strconv.Itoa(t.PriorityInt),
 			})
 		}
 	}

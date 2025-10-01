@@ -29,7 +29,7 @@ var StatsCmd = &cobra.Command{
 		totalTasks := len(tasks)
 		var completedTasks int
 		for _, task := range tasks {
-			if task.Completed {
+			if task.Status == "done" {
 				completedTasks++
 			}
 		}

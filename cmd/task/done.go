@@ -30,7 +30,7 @@ var DoneCmd = &cobra.Command{
 
 		var activeTasks []models.Task
 		for _, task := range tasks {
-			if !task.Completed {
+			if task.Status != "done" {
 				activeTasks = append(activeTasks, task)
 			}
 		}
@@ -63,7 +63,7 @@ var DoneCmd = &cobra.Command{
 
 		for i, task := range tasks {
 			if task.ID == doneTask.ID {
-				tasks[i].Completed = true
+				tasks[i].Status = "done"
 				break
 			}
 		}
