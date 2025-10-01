@@ -37,7 +37,9 @@ func (s *Storage) ReadTasks() ([]models.Task, error) {
 
 	// Populate the internal fields of Task
 	for i := range taskList.Tasks {
-		taskList.Tasks[i].ID = uuid.New().String()
+		if taskList.Tasks[i].ID == "" {
+			taskList.Tasks[i].ID = uuid.New().String()
+		}
 		taskList.Tasks[i].Completed = taskList.Tasks[i].Status == "done"
 		taskList.Tasks[i].PriorityInt = convertPriority(taskList.Tasks[i].Priority)
 		if taskList.Tasks[i].Description == "" {
