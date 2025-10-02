@@ -106,9 +106,11 @@ func showMainMenuCustom() (string, error) {
 	}
 	defer keyboard.Close()
 
+	storagePath := config.GetStoragePath()
 	for {
 		clearScreen()
 		fmt.Println("What would you like to do? (use arrow keys to navigate, Enter to select, 'q' to quit)")
+		fmt.Printf("Tasks file: %s\n\n", storagePath)
 
 		for i, item := range menuItems {
 			if i == selectedIndex {
