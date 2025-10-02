@@ -89,12 +89,14 @@ var ListCmd = &cobra.Command{
 		if sortBy != "" {
 			switch sortBy {
 			case "priority":
-				sort.Slice(filtered, func(i, j int) bool {
-					return filtered[i].Priority > filtered[j].Priority
+				prioRank := map[string]int{"highest": 4, "high": 3, "medium": 2, "low": 1}
+				sort.SliceStable(filtered, func(i, j int) bool {
+					return prioRank[filtered[i].Priority] > prioRank[filtered[j].Priority]
 				})
 			case "status":
-				sort.Slice(filtered, func(i, j int) bool {
-					return filtered[i].Status < filtered[j].Status
+				statusRank := map[string]int{"todo": 1, "in-progress": 2, "done": 3}
+				sort.SliceStable(filtered, func(i, j int) bool {
+					return statusRank[filtered[i].Status] < statusRank[filtered[j].Status]
 				})
 			}
 		}
