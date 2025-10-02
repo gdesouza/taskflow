@@ -119,7 +119,19 @@ make build
 
 ### Testing
 
-There are no tests yet.
+Run unit and integration tests (limited to packages with tests to avoid Go 1.25 coverage toolchain issue):
+```bash
+make test
+```
+This generates `coverage.out` and prints a one-line summary. View detailed HTML:
+```bash
+go tool cover -html=coverage.out
+```
+Generate full HTML report directly:
+```bash
+make coverage
+```
+Coverage currently focuses on internal logic (storage, filtering, config, task commands).
 
 ## License
 

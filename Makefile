@@ -16,9 +16,11 @@ build:
 	mkdir -p $(BIN_DIR)
 	go build $(LDFLAGS) -o $(BIN_DIR)/$(BINARY_NAME) .
 
+COVER_PKGS=./cmd/task ./internal/config ./internal/storage ./internal/tasks
+
 test:
-	@echo "Running tests with coverage..."
-	@go test -coverprofile=coverage.out ./...
+	@echo "Running tests with coverage on selected packages..."
+	@go test -coverprofile=coverage.out $(COVER_PKGS)
 	@echo ""
 	@echo "📊 Coverage Summary:"
 	@go tool cover -func=coverage.out | tail -1
@@ -26,8 +28,8 @@ test:
 	@echo "💡 For detailed coverage report, run: go tool cover -html=coverage.out"
 
 coverage:
-	@echo "Generating detailed coverage report..."
-	@go test -coverprofile=coverage.out ./...
+	@echo "Generating detailed coverage report (selected packages)..."
+	@go test -coverprofile=coverage.out $(COVER_PKGS)
 	@go tool cover -html=coverage.out -o coverage.html
 	@echo "📊 Coverage report generated: coverage.html"
 	@echo "📈 Overall coverage:"
