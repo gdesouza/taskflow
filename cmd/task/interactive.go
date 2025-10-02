@@ -164,10 +164,23 @@ func listTasks(s *storage.Storage) {
 	}
 	defer keyboard.Close()
 
+	helpVisible := false
 	for {
 		clearScreen()
 		width, height := getTerminalSize()
-		fmt.Println("Tasks (use arrow keys to navigate, Enter to view details, 'a' to add, 'x' to toggle done, 'f' to filter, 's' to sort, 'q' to quit)")
+		if helpVisible {
+			fmt.Println("Tasks - Help")
+			fmt.Println("  ↑/↓ : navigate")
+			fmt.Println("  Enter: view details")
+			fmt.Println("  a    : add task")
+			fmt.Println("  x    : toggle done")
+			fmt.Println("  f    : filter")
+			fmt.Println("  s    : sort")
+			fmt.Println("  q    : quit list view")
+			fmt.Println("  h    : hide help")
+		} else {
+			fmt.Println("Tasks (press 'h' for help)")
+		}
 
 		// Adjust startIndex if selectedIndex is out of view
 		if selectedIndex < startIndex {
