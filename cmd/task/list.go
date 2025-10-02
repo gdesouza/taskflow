@@ -15,6 +15,7 @@ func init() {
 	ListCmd.Flags().String("status", "", "Filter by status")
 	ListCmd.Flags().String("priority", "", "Filter by priority")
 	ListCmd.Flags().String("tags", "", "Filter by tags (comma-separated)")
+	ListCmd.Flags().String("contains", "", "Filter by words contained in title (space-separated)")
 	ListCmd.Flags().String("sort-by", "", "Sort by priority or status")
 	TaskCmd.AddCommand(ListCmd)
 }
@@ -73,6 +74,24 @@ var ListCmd = &cobra.Command{
 						}
 					}
 				}
+			}
+			tasks = filteredTasks
+		}
+
+		// Title word filtering (case-insensitive, all words must match)
+		contains, _ := cmd.Flags().GetString("contains")
+		if contains != "" {
+			needleWords := strings.Fields(strings.ToLower(contains))
+			var filteredTasks []models.Task
+		TaskLoop:
+			for _, task := range tasks {
+				titleLower := strings.ToLower(task.Title)
+				for _, w := range needleWords {
+					if !strings.Contains(titleLower, w) {
+						continue TaskLoop
+					}
+				}
+				filteredTasks = append(filteredTasks, task)
 			}
 			tasks = filteredTasks
 		}

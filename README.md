@@ -53,14 +53,14 @@ TaskFlow is an integrated CLI for tasks, calendars, and visualization. It helps 
 ### Task Management
 
 - `taskflow task add [title] --due-date [RFC3339 format]`: Add a new task.
-- `taskflow task list`: List all tasks.
+- `taskflow task list`: List all tasks. Supports filters: `--status`, `--priority`, `--tags tag1,tag2`, `--contains "word1 word2"` (all words must appear in the title).
 - `taskflow task done`: Mark a task as done.
 - `taskflow task edit`: Edit a task's title.
 - `taskflow task search [query]`: Search for tasks.
 - `taskflow task stats`: Show task statistics.
 - `taskflow task prioritize`: Prioritize tasks based on due dates and calendar events.
 - `taskflow task schedule`: Create tasks from calendar events.
-- `taskflow task interactive`: Start interactive mode (list view supports: arrow keys navigate, Enter details, 'a' add task, 'x' toggle done, 'f' filter, 's' sort, 'q' quit).
+- `taskflow task interactive`: Start interactive mode (list view supports: arrow keys navigate, Enter details, 'a' add task, 'x' toggle done, 'f' filter (now includes Title Contains multi-word filter), 's' sort, 'q' quit).
 - `taskflow task completion [bash|zsh|fish|powershell]`: Generate completion script.
 - `taskflow task config`: Manage configuration.
 - `taskflow task undo`: Undo the last operation.

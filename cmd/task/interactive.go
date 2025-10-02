@@ -372,7 +372,7 @@ func interactiveCreateTask(s *storage.Storage) (models.Task, bool) {
 func filterTasks(tasks []models.Task) []models.Task {
 	prompt := promptui.Select{
 		Label: "Filter by",
-		Items: []string{"Status", "Priority", "Tags", "Clear Filters"},
+		Items: []string{"Status", "Priority", "Tags", "Title Contains", "Clear Filters"},
 	}
 	_, result, err := prompt.Run()
 	if err != nil {
@@ -408,6 +408,19 @@ func filterTasks(tasks []models.Task) []models.Task {
 					filteredTasks = append(filteredTasks, task)
 					break
 				}
+			}
+		case "Title Contains":
+			words := strings.Fields(strings.ToLower(value))
+			titleLower := strings.ToLower(task.Title)
+			all := true
+			for _, w := range words {
+				if !strings.Contains(titleLower, w) {
+					all = false
+					break
+				}
+			}
+			if all {
+				filteredTasks = append(filteredTasks, task)
 			}
 		}
 	}
