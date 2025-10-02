@@ -15,7 +15,8 @@ func init() {
 	ListCmd.Flags().String("status", "", "Filter by status")
 	ListCmd.Flags().String("priority", "", "Filter by priority")
 	ListCmd.Flags().String("tags", "", "Filter by tags (comma-separated)")
-	ListCmd.Flags().String("contains", "", "Filter by words contained in title (space-separated)")
+	ListCmd.Flags().String("contains", "", "Filter by words contained in fields (space-separated)")
+	ListCmd.Flags().String("contains-fields", "title", "Comma-separated list of fields to search: title,description,notes,link,tags (tags matched by tag value)")
 	ListCmd.Flags().String("sort-by", "", "Sort by priority or status")
 	TaskCmd.AddCommand(ListCmd)
 }
@@ -78,16 +79,43 @@ var ListCmd = &cobra.Command{
 			tasks = filteredTasks
 		}
 
-		// Title word filtering (case-insensitive, all words must match)
+		// Word filtering across selected fields (case-insensitive, AND logic)
 		contains, _ := cmd.Flags().GetString("contains")
+		containsFields, _ := cmd.Flags().GetString("contains-fields")
 		if contains != "" {
 			needleWords := strings.Fields(strings.ToLower(contains))
+			fieldSet := map[string]bool{}
+			for _, f := range strings.Split(containsFields, ",") {
+				trim := strings.TrimSpace(strings.ToLower(f))
+				if trim != "" {
+					fieldSet[trim] = true
+				}
+			}
+			if len(fieldSet) == 0 { // default
+				fieldSet["title"] = true
+			}
 			var filteredTasks []models.Task
 		TaskLoop:
 			for _, task := range tasks {
-				titleLower := strings.ToLower(task.Title)
+				var haystackParts []string
+				if fieldSet["title"] {
+					haystackParts = append(haystackParts, task.Title)
+				}
+				if fieldSet["description"] {
+					haystackParts = append(haystackParts, task.Description)
+				}
+				if fieldSet["notes"] {
+					haystackParts = append(haystackParts, task.Notes)
+				}
+				if fieldSet["link"] {
+					haystackParts = append(haystackParts, task.Link)
+				}
+				if fieldSet["tags"] {
+					haystackParts = append(haystackParts, strings.Join(task.Tags, " "))
+				}
+				joined := strings.ToLower(strings.Join(haystackParts, " \n "))
 				for _, w := range needleWords {
-					if !strings.Contains(titleLower, w) {
+					if !strings.Contains(joined, w) {
 						continue TaskLoop
 					}
 				}

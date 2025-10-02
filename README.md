@@ -50,10 +50,28 @@ TaskFlow is an integrated CLI for tasks, calendars, and visualization. It helps 
 
 ## Usage
 
+### Filtering Examples
+
+```bash
+# Tasks containing both "deploy" and "staging" in title (default field)
+taskflow task list --contains "deploy staging"
+
+# Search words across title and notes
+taskflow task list --contains "refactor cache" --contains-fields title,notes
+
+# Filter by status AND word search in description
+taskflow task list --status in-progress --contains performance --contains-fields description
+
+# Combine tags, priority and multi-field contains
+taskflow task list --tags backend,infra --priority high \
+  --contains "latency alert" --contains-fields title,description,notes
+```
+
+
 ### Task Management
 
 - `taskflow task add [title] --due-date [RFC3339 format]`: Add a new task.
-- `taskflow task list`: List all tasks. Supports filters: `--status`, `--priority`, `--tags tag1,tag2`, `--contains "word1 word2"` (all words must appear in the title).
+- `taskflow task list`: List all tasks. Filters: `--status`, `--priority`, `--tags tag1,tag2`, `--contains "word1 word2"`, `--contains-fields title,description,notes,link,tags` (AND match across chosen fields).
 - `taskflow task done`: Mark a task as done.
 - `taskflow task edit`: Edit a task's title.
 - `taskflow task search [query]`: Search for tasks.
