@@ -26,7 +26,7 @@ type Task struct {
 	Status      string   `yaml:"status"`
 	Priority    string   `yaml:"priority"`
 	PriorityInt int      `yaml:"-"`
-	Source      string   `yaml:source"`
+	Source      string   `yaml:"source"`
 	Link        string   `yaml:"link"`
 	Tags        []string `yaml:"tags,omitempty"`
 	Notes       string   `yaml:"notes,omitempty"`

@@ -5,8 +5,9 @@ import (
 	"sort"
 	"strings"
 	"taskflow/internal/config"
-	"taskflow/internal/models"
+
 	"taskflow/internal/storage"
+	"taskflow/internal/tasks"
 
 	"github.com/spf13/cobra"
 )
@@ -33,118 +34,77 @@ var ListCmd = &cobra.Command{
 			return
 		}
 
-		tasks, err := s.ReadTasks()
+		allTasks, err := s.ReadTasks()
 		if err != nil {
 			fmt.Printf("Error reading tasks: %v\n", err)
 			return
 		}
 
-		// Filtering
+		// Build filter options
 		status, _ := cmd.Flags().GetString("status")
-		if status != "" {
-			var filteredTasks []models.Task
-			for _, task := range tasks {
-				if task.Status == status {
-					filteredTasks = append(filteredTasks, task)
-				}
-			}
-			tasks = filteredTasks
-		}
-
 		priority, _ := cmd.Flags().GetString("priority")
-		if priority != "" {
-			var filteredTasks []models.Task
-			for _, task := range tasks {
-				if task.Priority == priority {
-					filteredTasks = append(filteredTasks, task)
-				}
-			}
-			tasks = filteredTasks
-		}
-
-		tags, _ := cmd.Flags().GetString("tags")
-		if tags != "" {
-			tagList := strings.Split(tags, ",")
-			var filteredTasks []models.Task
-			for _, task := range tasks {
-				for _, t1 := range tagList {
-					for _, t2 := range task.Tags {
-						if t1 == t2 {
-							filteredTasks = append(filteredTasks, task)
-							break
-						}
-					}
-				}
-			}
-			tasks = filteredTasks
-		}
-
-		// Word filtering across selected fields (case-insensitive, AND logic)
+		tagsFlag, _ := cmd.Flags().GetString("tags")
 		contains, _ := cmd.Flags().GetString("contains")
 		containsFields, _ := cmd.Flags().GetString("contains-fields")
-		if contains != "" {
-			needleWords := strings.Fields(strings.ToLower(contains))
-			fieldSet := map[string]bool{}
+
+		var tagList []string
+		if tagsFlag != "" {
+			for _, t := range strings.Split(tagsFlag, ",") {
+				trim := strings.TrimSpace(t)
+				if trim != "" {
+					tagList = append(tagList, trim)
+				}
+			}
+		}
+
+		fieldSet := map[string]bool{}
+		if containsFields != "" {
 			for _, f := range strings.Split(containsFields, ",") {
 				trim := strings.TrimSpace(strings.ToLower(f))
 				if trim != "" {
 					fieldSet[trim] = true
 				}
 			}
-			if len(fieldSet) == 0 { // default
-				fieldSet["title"] = true
-			}
-			var filteredTasks []models.Task
-		TaskLoop:
-			for _, task := range tasks {
-				var haystackParts []string
-				if fieldSet["title"] {
-					haystackParts = append(haystackParts, task.Title)
-				}
-				if fieldSet["description"] {
-					haystackParts = append(haystackParts, task.Description)
-				}
-				if fieldSet["notes"] {
-					haystackParts = append(haystackParts, task.Notes)
-				}
-				if fieldSet["link"] {
-					haystackParts = append(haystackParts, task.Link)
-				}
-				if fieldSet["tags"] {
-					haystackParts = append(haystackParts, strings.Join(task.Tags, " "))
-				}
-				joined := strings.ToLower(strings.Join(haystackParts, " \n "))
-				for _, w := range needleWords {
-					if !strings.Contains(joined, w) {
-						continue TaskLoop
-					}
-				}
-				filteredTasks = append(filteredTasks, task)
-			}
-			tasks = filteredTasks
 		}
+
+		var words []string
+		if contains != "" {
+			for _, w := range strings.Fields(strings.ToLower(contains)) {
+				words = append(words, w)
+			}
+		}
+
+		opts := tasks.FilterOptions{
+			Status:         status,
+			Priority:       priority,
+			Tags:           tagList,
+			ContainsWords:  words,
+			ContainsFields: fieldSet,
+		}
+
+		filtered := tasks.ApplyFilters(allTasks, opts)
 
 		// Sorting
 		sortBy, _ := cmd.Flags().GetString("sort-by")
 		if sortBy != "" {
 			switch sortBy {
 			case "priority":
-				sort.Slice(tasks, func(i, j int) bool {
-					return tasks[i].Priority > tasks[j].Priority
+				sort.Slice(filtered, func(i, j int) bool {
+					return filtered[i].Priority > filtered[j].Priority
 				})
 			case "status":
-				sort.Slice(tasks, func(i, j int) bool {
-					return tasks[i].Status < tasks[j].Status
+				sort.Slice(filtered, func(i, j int) bool {
+					return filtered[i].Status < filtered[j].Status
 				})
 			}
 		}
 
-		if len(tasks) == 0 {
+		if len(filtered) == 0 {
 			fmt.Println("No tasks found.")
 			return
 		}
 
-		for _, task := range tasks {
+		for _, task := range filtered {
 			status := " "
 			if task.Status == "done" {
 				status = "x"

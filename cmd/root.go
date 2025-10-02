@@ -23,7 +23,17 @@ func Execute() {
 	}
 }
 
-func init() {
+func NewRootCmd() *cobra.Command {
+	root := &cobra.Command{
+		Use:   "taskflow",
+		Short: "Unified Task and Calendar Management Suite",
+		Long:  `TaskFlow is an integrated CLI for tasks, calendars, and visualization.`,
+	}
+	addSubcommands(root)
+	return root
+}
+
+func addSubcommands(root *cobra.Command) {
 	// Add subcommands here in later phases
 	taskCmd := &cobra.Command{
 		Use:   "task",
@@ -41,7 +51,11 @@ func init() {
 	taskCmd.AddCommand(task.CompletionCmd)
 	taskCmd.AddCommand(task.PrioritizeCmd)
 	taskCmd.AddCommand(task.ScheduleCmd)
-	RootCmd.AddCommand(taskCmd)
-	RootCmd.AddCommand(calendar.CalendarCmd)
-	RootCmd.AddCommand(display.DisplayCmd)
+	root.AddCommand(taskCmd)
+	root.AddCommand(calendar.CalendarCmd)
+	root.AddCommand(display.DisplayCmd)
+}
+
+func init() {
+	addSubcommands(RootCmd)
 }
