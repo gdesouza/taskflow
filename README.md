@@ -78,7 +78,32 @@ taskflow task list --tags backend,infra --priority high \
 - `taskflow task stats`: Show task statistics.
 - `taskflow task prioritize`: Prioritize tasks based on due dates and calendar events.
 - `taskflow task schedule`: Create tasks from calendar events.
-- `taskflow task interactive`: Start interactive mode (list view supports: arrow keys navigate, Enter details, 'a' add task, 'x' toggle done, 'f' filter (now includes Title Contains multi-word filter), 's' sort, 'q' quit).
+- `taskflow task interactive`: Start interactive mode (arrow keys navigate, Enter details, 'a' add, 'x' toggle done, 'f' filter, 's' sort, 'h' help, 'q'/Esc quit, auto-reloads on external file changes).
+
+### Interactive Mode
+
+Interactive mode provides a terminal UI for rapid task review and editing.
+
+Key bindings:
+- Arrow Up/Down: Navigate tasks
+- Enter: View/edit selected task fields
+- a: Add a new task (focus returns to list afterward)
+- x: Toggle done/todo status
+- f: Filter tasks (Status, Priority, Tags, Title Contains multi-word AND search, Clear Filters)
+- s: Sort tasks (Priority, Status, Default [stable by ID])
+- h: Toggle contextual help panel
+- q or Esc: Exit list view (and from main menu choose another action or quit)
+
+Other behaviors:
+- Auto-Reload: The list checks the tasks file every 1s; external edits (CLI commands, editor) are reflected automatically while preserving selection when possible.
+- Tasks File Path: Shown in the main menu so you can open it quickly in an editor.
+- Truncation: Long lines are truncated to terminal width with an ellipsis.
+
+Planned enhancements (not yet implemented):
+- Event-based reload via fsnotify (lower latency)
+- Flash indicator when a reload occurs
+- Configurable reload interval / disable flag
+
 - `taskflow task completion [bash|zsh|fish|powershell]`: Generate completion script.
 - `taskflow task config`: Manage configuration.
 - `taskflow task undo`: Undo the last operation.
