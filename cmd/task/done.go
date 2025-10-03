@@ -5,6 +5,7 @@ import (
 	"taskflow/internal/config"
 	"taskflow/internal/models"
 	"taskflow/internal/storage"
+	"time"
 
 	"github.com/manifoldco/promptui"
 	"github.com/spf13/cobra"
@@ -64,6 +65,7 @@ var DoneCmd = &cobra.Command{
 		for i, task := range tasks {
 			if task.ID == doneTask.ID {
 				tasks[i].Status = "done"
+				tasks[i].UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 				break
 			}
 		}

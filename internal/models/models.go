@@ -30,4 +30,5 @@ type Task struct {
 	Link        string   `yaml:"link"`
 	Tags        []string `yaml:"tags,omitempty"`
 	Notes       string   `yaml:"notes,omitempty"`
+	UpdatedAt   string   `yaml:"updated_at,omitempty"`
 }

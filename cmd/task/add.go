@@ -1,5 +1,3 @@
-
-
 package task
 
 import (
@@ -8,6 +6,7 @@ import (
 	"taskflow/internal/config"
 	"taskflow/internal/models"
 	"taskflow/internal/storage"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
@@ -35,18 +34,20 @@ var AddCmd = &cobra.Command{
 		}
 
 		task := models.Task{
-			ID:       uuid.New().String(),
-			Title:    strings.Join(args, " "),
-			DueDate:  dueDate,
-			Status:   "todo",
-			Priority: "medium",
+			ID:        uuid.New().String(),
+			Title:     strings.Join(args, " "),
+			DueDate:   dueDate,
+			Status:    "todo",
+			Priority:  "medium",
+			UpdatedAt: time.Now().UTC().Format(time.RFC3339),
 		}
 
 		tasks = append(tasks, task)
 
 		if err := s.WriteTasks(tasks); err != nil {
 			fmt.Printf("Error writing tasks: %v\n", err)
-			return		}
+			return
+		}
 
 		fmt.Printf("Added task: %s\n", task.Title)
 	},

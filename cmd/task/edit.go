@@ -3,8 +3,8 @@ package task
 import (
 	"fmt"
 	"taskflow/internal/config"
-
 	"taskflow/internal/storage"
+	"time"
 
 	"github.com/manifoldco/promptui"
 	"github.com/spf13/cobra"
@@ -68,6 +68,7 @@ var EditCmd = &cobra.Command{
 		for i, task := range tasks {
 			if task.ID == editTask.ID {
 				tasks[i].Title = newTitle
+				tasks[i].UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 				break
 			}
 		}

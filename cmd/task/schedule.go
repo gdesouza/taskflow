@@ -5,6 +5,7 @@ import (
 	"taskflow/internal/config"
 	"taskflow/internal/models"
 	"taskflow/internal/storage"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
@@ -37,9 +38,10 @@ var ScheduleCmd = &cobra.Command{
 		var newTasks []models.Task
 		for _, event := range events {
 			task := models.Task{
-				ID:      uuid.New().String(),
-				Title:   event.Title,
-				DueDate: event.StartTime,
+				ID:        uuid.New().String(),
+				Title:     event.Title,
+				DueDate:   event.StartTime,
+				UpdatedAt: time.Now().UTC().Format(time.RFC3339),
 			}
 			newTasks = append(newTasks, task)
 		}

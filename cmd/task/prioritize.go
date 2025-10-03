@@ -43,6 +43,7 @@ var PrioritizeCmd = &cobra.Command{
 		in24Hours := now.Add(24 * time.Hour)
 
 		for i, task := range tasks {
+			originalPriority := tasks[i].Priority
 			// Prioritize based on due date
 			if task.DueDate != "" {
 				dueDate, err := time.Parse(time.RFC3339, task.DueDate)
@@ -63,6 +64,11 @@ var PrioritizeCmd = &cobra.Command{
 						}
 					}
 				}
+			}
+
+			if tasks[i].Priority != originalPriority {
+				// record that this task was updated
+				tasks[i].UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 			}
 		}
 
