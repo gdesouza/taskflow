@@ -123,6 +123,39 @@ Planned enhancements (not yet implemented):
 - `taskflow version`: Print the version number.
 - `taskflow display table`: Display tasks in a table.
 
+## Remote Sync (GitHub Gist)
+
+TaskFlow provides an MVP remote synchronization feature using a private (or public) GitHub Gist to store two files:
+- `tasks.yaml`
+- `tasks.archive.yaml`
+
+This is plaintext (no encryption) and uses a simple remote-wins (pull) / blind-overwrite (push) strategy. Future improvements may add merge/conflict detection and encryption.
+
+Prerequisites:
+1. Create a GitHub Personal Access Token (classic) or fine-grained token with the `gist` scope.
+2. Export it in your environment:
+```bash
+export TASKFLOW_GIST_TOKEN=ghp_yourtokenhere
+```
+
+Commands:
+- `taskflow remote gist-init` : Creates a new gist (default private; add `--public` to make it public) and stores its ID in config under `remote.gist.id`.
+- `taskflow remote gist-status` : Shows the configured gist ID and fetches its latest version hash.
+- `taskflow remote gist-pull` : Downloads `tasks.yaml` and `tasks.archive.yaml` from the gist and overwrites local files (remote wins).
+- `taskflow remote gist-push` : Uploads local `tasks.yaml` and archive file to the gist (blind overwrite).
+
+Behavior & Notes:
+- Config location: `~/.config/taskflow/config.yaml` gets a new key `remote.gist.id` after `gist-init`.
+- If you delete the gist manually, `gist-status` / `gist-pull` / `gist-push` will error until you re-run `gist-init`.
+- Archive file naming follows: `tasks.yaml` -> `tasks.archive.yaml` (or `<name>.archive.<ext>` generically).
+- `gist-pull` validates the main file contains a `tasks:` key before overwriting.
+- No conflict detection: pushing will overwrite whatever is on the remote; pulling will discard local changes since last push.
+
+Planned Enhancements:
+- Store last pulled version and warn if remote changed before push.
+- Optional merge strategy (union by task ID) and conflict report.
+- Optional encryption (age / sops style) before uploading.
+
 ## Configuration
 
 TaskFlow uses a configuration file located at `~/.config/taskflow/config.yaml`.
