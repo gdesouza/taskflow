@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"taskflow/internal/config"
 	"time"
 
@@ -131,8 +130,8 @@ var GistPushCmd = &cobra.Command{
 			fmt.Println("No gist configured.")
 			return
 		}
-		mainPath := config.GetStoragePath()
-		archivePath := archiveFilePath(mainPath)
+		mainPath := config.GetTasksFilePath()
+		archivePath := config.GetArchiveFilePath()
 		mainData, err := os.ReadFile(mainPath)
 		if err != nil {
 			fmt.Printf("Read error: %v\n", err)
@@ -238,8 +237,8 @@ func patchGist(id, mainContent, archiveContent string) error {
 }
 
 func overwriteLocal(mainContent, archiveContent string) error {
-	mainPath := config.GetStoragePath()
-	archPath := archiveFilePath(mainPath)
+	mainPath := config.GetTasksFilePath()
+	archPath := config.GetArchiveFilePath()
 	// Basic validation: require mainContent to include 'tasks:'
 	if !bytes.Contains([]byte(mainContent), []byte("tasks:")) {
 		return errors.New("remote main file missing tasks: key")
@@ -261,24 +260,4 @@ func getGistID() string {
 func setGistID(id string) error {
 	viper.Set(gistConfigKey, id)
 	return viper.WriteConfig()
-}
-
-// localArchiveFilePath duplicates logic from archive command to avoid import cycle.
-// If archiveFilePath signature/location changes, update here accordingly.
-func archiveFilePath(main string) string {
-	base := filepath.Base(main)
-	dir := filepath.Dir(main)
-	var name, ext string
-	for i := len(base) - 1; i >= 0; i-- {
-		if base[i] == '.' {
-			name = base[:i]
-			ext = base[i:]
-			break
-		}
-	}
-	if name == "" {
-		name = base
-		return filepath.Join(dir, name+".archive")
-	}
-	return filepath.Join(dir, name+".archive"+ext)
 }

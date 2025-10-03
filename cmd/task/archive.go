@@ -3,7 +3,6 @@ package task
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"taskflow/internal/config"
 	"taskflow/internal/models"
 	"taskflow/internal/storage"
@@ -51,7 +50,7 @@ var ArchiveCmd = &cobra.Command{
 		}
 
 		dry, _ := cmd.Flags().GetBool("dry-run")
-		archivePath := archiveFilePath(storagePath)
+		archivePath := config.GetArchiveFilePath()
 
 		if dry {
 			fmt.Printf("Would archive %d tasks to %s\n", len(completed), archivePath)
@@ -75,26 +74,6 @@ var ArchiveCmd = &cobra.Command{
 
 		fmt.Printf("Archived %d tasks → %s (remaining active: %d)\n", len(completed), archivePath, len(active))
 	},
-}
-
-// archiveFilePath derives archive filename from storage path (tasks.yaml -> tasks.archive.yaml)
-func archiveFilePath(main string) string {
-	base := filepath.Base(main)
-	dir := filepath.Dir(main)
-	// simple replacement: tasks.yaml -> tasks.archive.yaml; generic: name.ext -> name.archive.ext
-	var name, ext string
-	for i := len(base) - 1; i >= 0; i-- {
-		if base[i] == '.' {
-			name = base[:i]
-			ext = base[i:]
-			break
-		}
-	}
-	if name == "" { // no extension
-		name = base
-		return filepath.Join(dir, name+".archive")
-	}
-	return filepath.Join(dir, name+".archive"+ext)
 }
 
 // appendToArchive reads existing archive (if any), appends new tasks, and writes back.
