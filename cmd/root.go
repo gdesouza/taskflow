@@ -5,6 +5,7 @@ import (
 	"os"
 	"taskflow/cmd/calendar"
 	"taskflow/cmd/display"
+	"taskflow/cmd/remote"
 	"taskflow/cmd/task"
 
 	"github.com/spf13/cobra"
@@ -54,6 +55,7 @@ func addSubcommands(root *cobra.Command) {
 	root.AddCommand(taskCmd)
 	root.AddCommand(calendar.CalendarCmd)
 	root.AddCommand(display.DisplayCmd)
+	root.AddCommand(remote.RemoteCmd)
 }
 
 func init() {
