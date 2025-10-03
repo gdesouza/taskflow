@@ -52,6 +52,7 @@ func addSubcommands(root *cobra.Command) {
 	taskCmd.AddCommand(task.CompletionCmd)
 	taskCmd.AddCommand(task.PrioritizeCmd)
 	taskCmd.AddCommand(task.ScheduleCmd)
+	taskCmd.AddCommand(task.ArchiveCmd)
 	root.AddCommand(taskCmd)
 	root.AddCommand(calendar.CalendarCmd)
 	root.AddCommand(display.DisplayCmd)
