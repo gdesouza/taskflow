@@ -2,6 +2,8 @@ package remote
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,12 +23,156 @@ import (
 var gistTokenEnv = "TASKFLOW_GIST_TOKEN"
 
 func init() {
-	RemoteCmd.AddCommand(GistInitCmd, GistStatusCmd, GistPullCmd, GistPushCmd)
+	RemoteCmd.AddCommand(GistInitCmd, GistStatusCmd, GistPullCmd, GistPushCmd, GistSyncCmd)
 	GistInitCmd.Flags().Bool("public", false, "Create a public gist (default private)")
+	GistSyncCmd.Flags().Bool("force", false, "Force divergence resolution with --mode")
+	GistSyncCmd.Flags().String("mode", "", "When forcing: 'push' (local wins) or 'pull' (remote wins)")
 }
 
 // Config keys (extendable later).
 const gistConfigKey = "remote.gist.id"
+
+var GistSyncCmd = &cobra.Command{
+	Use:   "gist-sync",
+	Short: "Synchronize local tasks with gist (fast-forward or push)",
+	Long: `Performs a stateful sync using stored remote.gist.last_version and remote.gist.last_local_hash.
+Logic:
+  - First sync (no metadata): pull remote.
+  - If remote version unchanged and local hash changed: push.
+  - If remote advanced and local unchanged since last sync: pull (fast-forward).
+  - Divergence (both changed): requires --force with --mode=push|pull.
+`,
+	Run: func(cmd *cobra.Command, args []string) {
+		id := getGistID()
+		if id == "" {
+			fmt.Println("No gist configured.")
+			return
+		}
+		force, _ := cmd.Flags().GetBool("force")
+		mode, _ := cmd.Flags().GetString("mode")
+		if mode != "" && mode != "push" && mode != "pull" {
+			fmt.Println("--mode must be 'push' or 'pull'")
+			return
+		}
+		lastVer := config.GetGistLastVersion()
+		lastHash := config.GetGistLastLocalHash()
+
+		remoteMain, remoteArch, remoteVer, err := fetchGist(id)
+		if err != nil {
+			fmt.Printf("Fetch error: %v\n", err)
+			return
+		}
+		localHash, err := hashLocalState()
+		if err != nil {
+			fmt.Printf("Local hash error: %v\n", err)
+			return
+		}
+
+		// First sync: no stored version
+		if lastVer == "" {
+			if err := overwriteLocal(remoteMain, remoteArch); err != nil {
+				fmt.Printf("Write error: %v\n", err)
+				return
+			}
+			newHash, _ := hashLocalState()
+			_ = config.SetGistSyncMeta(remoteVer, newHash)
+			fmt.Println("First sync: pulled remote state.")
+			return
+		}
+
+		// Remote same version as last sync
+		if remoteVer == lastVer {
+			if localHash == lastHash {
+				fmt.Println("Already up to date (no changes).")
+				return
+			}
+			// Local changed, remote not advanced -> push
+			mainPath := config.GetTasksFilePath()
+			archPath := config.GetArchiveFilePath()
+			m, err := os.ReadFile(mainPath)
+			if err != nil {
+				fmt.Printf("Read error: %v\n", err)
+				return
+			}
+			a, err := os.ReadFile(archPath)
+			if err != nil && !os.IsNotExist(err) {
+				fmt.Printf("Read error: %v\n", err)
+				return
+			}
+			if os.IsNotExist(err) {
+				a = []byte("tasks: []\n")
+			}
+			newVer, err := patchGist(id, string(m), string(a))
+			if err != nil {
+				fmt.Printf("Push error: %v\n", err)
+				return
+			}
+			newHash, _ := hashLocalState()
+			_ = config.SetGistSyncMeta(newVer, newHash)
+			fmt.Println("Sync: pushed local changes.")
+			return
+		}
+
+		// Remote advanced vs our stored version
+		remoteHash := hashPair(remoteMain, remoteArch)
+
+		if localHash == lastHash { // local unchanged -> fast-forward pull
+			if err := overwriteLocal(remoteMain, remoteArch); err != nil {
+				fmt.Printf("Write error: %v\n", err)
+				return
+			}
+			newHash, _ := hashLocalState()
+			_ = config.SetGistSyncMeta(remoteVer, newHash)
+			fmt.Println("Fast-forward: pulled remote changes.")
+			return
+		}
+
+		// Divergence
+		if !force {
+			fmt.Println("Divergence detected: both local and remote changed since last sync. Re-run with --force --mode=push or --force --mode=pull.")
+			fmt.Printf("Stored local hash: %s\nCurrent local hash: %s\nRemote hash: %s\n", lastHash, localHash, remoteHash)
+			return
+		}
+		if mode == "" {
+			fmt.Println("--mode required with --force (push or pull)")
+			return
+		}
+		if mode == "pull" {
+			if err := overwriteLocal(remoteMain, remoteArch); err != nil {
+				fmt.Printf("Write error: %v\n", err)
+				return
+			}
+			newHash, _ := hashLocalState()
+			_ = config.SetGistSyncMeta(remoteVer, newHash)
+			fmt.Println("Forced pull applied.")
+			return
+		}
+		// mode push
+		mainPath := config.GetTasksFilePath()
+		archPath := config.GetArchiveFilePath()
+		m, err := os.ReadFile(mainPath)
+		if err != nil {
+			fmt.Printf("Read error: %v\n", err)
+			return
+		}
+		a, err := os.ReadFile(archPath)
+		if err != nil && !os.IsNotExist(err) {
+			fmt.Printf("Read error: %v\n", err)
+			return
+		}
+		if os.IsNotExist(err) {
+			a = []byte("tasks: []\n")
+		}
+		newVer, err := patchGist(id, string(m), string(a))
+		if err != nil {
+			fmt.Printf("Push error: %v\n", err)
+			return
+		}
+		newHash, _ := hashLocalState()
+		_ = config.SetGistSyncMeta(newVer, newHash)
+		fmt.Println("Forced push applied.")
+	},
+}
 
 var GistInitCmd = &cobra.Command{
 	Use:   "gist-init",
@@ -145,7 +291,7 @@ var GistPushCmd = &cobra.Command{
 		if os.IsNotExist(err) {
 			archiveData = []byte("tasks: []\n")
 		}
-		if err := patchGist(id, string(mainData), string(archiveData)); err != nil {
+		if _, err := patchGist(id, string(mainData), string(archiveData)); err != nil {
 			fmt.Printf("Push error: %v\n", err)
 			return
 		}
@@ -209,10 +355,10 @@ func extractFile(gr gistResponse, name string) string {
 	return f.Content
 }
 
-func patchGist(id, mainContent, archiveContent string) error {
+func patchGist(id, mainContent, archiveContent string) (string, error) {
 	token := os.Getenv(gistTokenEnv)
 	if token == "" {
-		return errors.New("missing token env")
+		return "", errors.New("missing token env")
 	}
 	payload := map[string]any{
 		"files": map[string]map[string]string{
@@ -226,14 +372,28 @@ func patchGist(id, mainContent, archiveContent string) error {
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("patch failed %d: %s", resp.StatusCode, string(b))
+		return "", fmt.Errorf("patch failed %d: %s", resp.StatusCode, string(b))
 	}
-	return nil
+	var gr gistResponse
+	if err := json.NewDecoder(resp.Body).Decode(&gr); err != nil {
+		return "", err
+	}
+	ver := ""
+	if len(gr.History) > 0 {
+		ver = gr.History[0].Version
+	}
+	return ver, nil
+}
+
+// hashPair forms the same canonical hash as hashLocalState but for remote contents.
+func hashPair(mainContent, archiveContent string) string {
+	h := sha256.Sum256(append(append([]byte(mainContent), []byte("\n--\n")...), []byte(archiveContent)...))
+	return hex.EncodeToString(h[:])
 }
 
 func overwriteLocal(mainContent, archiveContent string) error {
@@ -250,6 +410,27 @@ func overwriteLocal(mainContent, archiveContent string) error {
 		return err
 	}
 	return nil
+}
+
+// hashLocalState returns SHA256 of concatenated task + archive file contents.
+func hashLocalState() (string, error) {
+	mainPath := config.GetTasksFilePath()
+	archPath := config.GetArchiveFilePath()
+	m, err := os.ReadFile(mainPath)
+	if err != nil {
+		return "", err
+	}
+	a, err := os.ReadFile(archPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			a = []byte("tasks: []\n")
+		} else {
+			return "", err
+		}
+	}
+	// Simple canonical form: main + "\n--\n" + archive
+	h := sha256.Sum256(append(append(m, []byte("\n--\n")...), a...))
+	return hex.EncodeToString(h[:]), nil
 }
 
 // Configuration helpers for gist ID persistence

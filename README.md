@@ -143,17 +143,23 @@ Commands:
 - `taskflow remote gist-status` : Shows the configured gist ID and fetches its latest version hash.
 - `taskflow remote gist-pull` : Downloads `tasks.yaml` and `tasks.archive.yaml` from the gist and overwrites local files (remote wins).
 - `taskflow remote gist-push` : Uploads local `tasks.yaml` and archive file to the gist (blind overwrite).
+- `taskflow remote gist-sync` : Stateful sync using stored metadata:
+  * First run: pulls remote.
+  * If remote unchanged but local changed: pushes local.
+  * If remote advanced and local unchanged since last sync: pulls (fast-forward).
+  * If both changed (divergence): aborts unless `--force --mode=push|pull` supplied.
+  * Flags: `--force`, `--mode=push|pull`.
 
 Behavior & Notes:
-- Config location: `~/.config/taskflow/config.yaml` gets a new key `remote.gist.id` after `gist-init`.
-- If you delete the gist manually, `gist-status` / `gist-pull` / `gist-push` will error until you re-run `gist-init`.
+- Config location: `~/.config/taskflow/config.yaml` gains keys: `remote.gist.id`, `remote.gist.last_version`, `remote.gist.last_local_hash` after syncing.
+- If you delete the gist manually, `gist-status` / `gist-pull` / `gist-push` / `gist-sync` will error until you re-run `gist-init`.
 - Archive file naming follows: `tasks.yaml` -> `tasks.archive.yaml` (or `<name>.archive.<ext>` generically).
 - `gist-pull` validates the main file contains a `tasks:` key before overwriting.
-- No conflict detection: pushing will overwrite whatever is on the remote; pulling will discard local changes since last push.
+- Divergence handling (both changed) currently requires an explicit force with direction; no automatic merge yet.
 
 Planned Enhancements:
-- Store last pulled version and warn if remote changed before push.
-- Optional merge strategy (union by task ID) and conflict report.
+- Three-way merge (structural task merging) during `gist-sync` for divergence without force.
+- Conflict report listing differing task IDs and fields.
 - Optional encryption (age / sops style) before uploading.
 
 ## Configuration

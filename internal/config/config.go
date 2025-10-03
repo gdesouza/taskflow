@@ -149,3 +149,16 @@ func GetStoragePath() string { //nolint:revive
 func GetCalendarStoragePath() string {
 	return viper.GetString("calendar.storage.path")
 }
+
+// Remote gist sync metadata helpers
+func GetGistLastVersion() string   { return viper.GetString("remote.gist.last_version") }
+func GetGistLastLocalHash() string { return viper.GetString("remote.gist.last_local_hash") }
+func SetGistSyncMeta(version, localHash string) error {
+	if version != "" {
+		viper.Set("remote.gist.last_version", version)
+	}
+	if localHash != "" {
+		viper.Set("remote.gist.last_local_hash", localHash)
+	}
+	return viper.WriteConfig()
+}
