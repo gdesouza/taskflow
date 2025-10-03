@@ -107,6 +107,7 @@ Planned enhancements (not yet implemented):
 - `taskflow task completion [bash|zsh|fish|powershell]`: Generate completion script.
 - `taskflow task config`: Manage configuration.
 - `taskflow task undo`: Undo the last operation.
+- `taskflow task archive`: Archive all tasks with status=done into a separate archive file (supports `--dry-run`).
 
 ### Calendar Management
 
