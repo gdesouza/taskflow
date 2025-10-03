@@ -8,6 +8,7 @@ import (
 	"taskflow/internal/config"
 	"taskflow/internal/models"
 	"taskflow/internal/storage"
+	"time"
 
 	"github.com/eiannone/keyboard"
 	"github.com/google/uuid"
@@ -165,7 +166,39 @@ func listTasks(s *storage.Storage) {
 	defer keyboard.Close()
 
 	helpVisible := false
+
+	// File modification tracking for auto-reload
+	storagePath := config.GetStoragePath()
+	lastMod := time.Time{}
+	if fi, err := os.Stat(storagePath); err == nil {
+		lastMod = fi.ModTime()
+	}
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	type keyEvent struct {
+		char rune
+		key  keyboard.Key
+	}
+	newKeyEvents := func() chan keyEvent {
+		ch := make(chan keyEvent)
+		go func() {
+			for {
+				char, key, err := keyboard.GetKey()
+				if err != nil {
+					close(ch)
+					return
+				}
+				ch <- keyEvent{char: char, key: key}
+			}
+		}()
+		return ch
+	}
+	keyEvents := newKeyEvents()
+
 	for {
+		// Render
 		clearScreen()
 		width, height := getTerminalSize()
 		if helpVisible {
@@ -178,6 +211,7 @@ func listTasks(s *storage.Storage) {
 			fmt.Println("  s    : sort")
 			fmt.Println("  q    : quit list view")
 			fmt.Println("  h    : hide help")
+			fmt.Println("  (auto-reloads on external file changes)")
 		} else {
 			fmt.Println("Tasks (press 'h' for help)")
 		}
@@ -214,100 +248,123 @@ func listTasks(s *storage.Storage) {
 			}
 		}
 
-		char, key, err := keyboard.GetKey()
-		if err != nil {
-			panic(err)
-		}
+		// Event handling
+		select {
+		case ev, ok := <-keyEvents:
+			if !ok { // restart after a close (e.g., detail view reopening keyboard)
+				if err := keyboard.Open(); err == nil {
+					keyEvents = newKeyEvents()
+					continue
+				} else {
+					return
+				}
+			}
+			char := ev.char
+			key := ev.key
+			switch key {
+			case keyboard.KeyArrowUp:
+				if selectedIndex > 0 {
+					selectedIndex--
+				}
+			case keyboard.KeyArrowDown:
+				if selectedIndex < len(tasks)-1 {
+					selectedIndex++
+				}
+			case keyboard.KeyEnter:
+				if len(tasks) > 0 {
+					showTaskDetails(s, originalTasks, &tasks[selectedIndex])
+					// after returning, keyboard reopened by showTaskDetails; recreate keyEvents
+					keyEvents = newKeyEvents()
+				}
+			case keyboard.KeyEsc:
+				return
+			}
 
-		switch key {
-		case keyboard.KeyArrowUp:
-			if selectedIndex > 0 {
-				selectedIndex--
+			if char == 'q' {
+				return
 			}
-		case keyboard.KeyArrowDown:
-			if selectedIndex < len(tasks)-1 {
-				selectedIndex++
+			if char == 'h' {
+				helpVisible = !helpVisible
 			}
-		case keyboard.KeyEnter:
-			if len(tasks) > 0 {
-				showTaskDetails(s, originalTasks, &tasks[selectedIndex])
+			if char == 'x' {
+				if len(tasks) > 0 {
+					task := &tasks[selectedIndex]
+					if task.Status == "done" {
+						task.Status = "todo"
+					} else {
+						task.Status = "done"
+					}
+					s.UpdateTask(originalTasks, *task)
+				}
+			}
+			if char == 'f' {
+				keyboard.Close()
+				tasks = filterTasks(originalTasks)
+				selectedIndex = 0
+				startIndex = 0
 				if err := keyboard.Open(); err != nil {
 					panic(err)
 				}
+				keyEvents = newKeyEvents()
 			}
-		case keyboard.KeyEsc:
-			return
-		}
-
-		if char == 'q' {
-			return
-		}
-
-		if char == 'x' {
-			if len(tasks) > 0 {
-				task := &tasks[selectedIndex]
-				if task.Status == "done" {
-					task.Status = "todo"
-				} else {
-					task.Status = "done"
+			if char == 's' {
+				keyboard.Close()
+				tasks = sortTasks(tasks)
+				selectedIndex = 0
+				startIndex = 0
+				if err := keyboard.Open(); err != nil {
+					panic(err)
 				}
-				s.UpdateTask(originalTasks, *task)
+				keyEvents = newKeyEvents()
 			}
-		}
-
-		if char == 'f' {
-			keyboard.Close()
-			tasks = filterTasks(originalTasks)
-			selectedIndex = 0
-			startIndex = 0
-			if err := keyboard.Open(); err != nil {
-				panic(err)
+			if char == 'a' {
+				keyboard.Close()
+				newTask, ok := interactiveCreateTask(s)
+				if ok {
+					updated, err := s.ReadTasks()
+					if err == nil {
+						tasks = updated
+						originalTasks = make([]models.Task, len(tasks))
+						copy(originalTasks, tasks)
+						for i, t := range tasks {
+							if t.ID == newTask.ID {
+								selectedIndex = i
+								break
+							}
+						}
+						if selectedIndex < startIndex {
+							startIndex = selectedIndex
+						}
+						width, height := getTerminalSize()
+						_ = width
+						if selectedIndex >= startIndex+height-2 {
+							startIndex = selectedIndex - height + 3
+							if startIndex < 0 {
+								startIndex = 0
+							}
+						}
+					}
+				}
+				if err := keyboard.Open(); err != nil {
+					panic(err)
+				}
+				keyEvents = newKeyEvents()
 			}
-		}
-
-		if char == 's' {
-			keyboard.Close()
-			tasks = sortTasks(tasks)
-			selectedIndex = 0
-			startIndex = 0
-			if err := keyboard.Open(); err != nil {
-				panic(err)
-			}
-		}
-
-		if char == 'a' {
-			keyboard.Close()
-			newTask, ok := interactiveCreateTask(s)
-			if ok {
-				// Reload tasks from storage to ensure consistency
-				updated, err := s.ReadTasks()
-				if err == nil {
+		case <-ticker.C:
+			if fi, err := os.Stat(storagePath); err == nil && fi.ModTime().After(lastMod) {
+				if updated, err2 := s.ReadTasks(); err2 == nil {
+					lastMod = fi.ModTime()
 					tasks = updated
 					originalTasks = make([]models.Task, len(tasks))
 					copy(originalTasks, tasks)
-					// Find index of new task
-					for i, t := range tasks {
-						if t.ID == newTask.ID {
-							selectedIndex = i
-							break
-						}
-					}
-					// Adjust startIndex if needed
-					if selectedIndex < startIndex {
-						startIndex = selectedIndex
-					}
-					width, height := getTerminalSize()
-					_ = width
-					if selectedIndex >= startIndex+height-2 {
-						startIndex = selectedIndex - height + 3
-						if startIndex < 0 {
-							startIndex = 0
+					if selectedIndex >= len(tasks) {
+						if len(tasks) == 0 {
+							selectedIndex = 0
+						} else {
+							selectedIndex = len(tasks) - 1
 						}
 					}
 				}
-			}
-			if err := keyboard.Open(); err != nil {
-				panic(err)
 			}
 		}
 	}
