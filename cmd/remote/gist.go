@@ -198,7 +198,7 @@ var GistInitCmd = &cobra.Command{
 			},
 		}
 		body, _ := json.Marshal(payload)
-		req, _ := http.NewRequest("POST", "https://api.github.com/gists", bytes.NewReader(body))
+		req, _ := http.NewRequest("POST", gistAPIBase+"/gists", bytes.NewReader(body))
 		req.Header.Set("Authorization", "token "+token)
 		req.Header.Set("Accept", "application/vnd.github+json")
 		resp, err := http.DefaultClient.Do(req)
@@ -301,6 +301,8 @@ var GistPushCmd = &cobra.Command{
 
 // Helpers
 
+var gistAPIBase = "https://api.github.com"
+
 type gistResponse struct {
 	Files map[string]struct {
 		Content   string `json:"content"`
@@ -318,7 +320,7 @@ func fetchGist(id string) (main, archive, version string, err error) {
 	if token == "" {
 		return "", "", "", errors.New("missing token env")
 	}
-	req, _ := http.NewRequest("GET", "https://api.github.com/gists/"+id, nil)
+	req, _ := http.NewRequest("GET", gistAPIBase+"/gists/"+id, nil)
 	req.Header.Set("Authorization", "token "+token)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := http.DefaultClient.Do(req)
@@ -367,7 +369,7 @@ func patchGist(id, mainContent, archiveContent string) (string, error) {
 		},
 	}
 	body, _ := json.Marshal(payload)
-	req, _ := http.NewRequest("PATCH", "https://api.github.com/gists/"+id, bytes.NewReader(body))
+	req, _ := http.NewRequest("PATCH", gistAPIBase+"/gists/"+id, bytes.NewReader(body))
 	req.Header.Set("Authorization", "token "+token)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := http.DefaultClient.Do(req)
