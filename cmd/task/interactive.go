@@ -284,6 +284,7 @@ func listTasks(s *storage.Storage) {
 			fmt.Println("  a    : add task")
 			fmt.Println("  x    : toggle done")
 			fmt.Println("  f    : filter (persists until cleared)")
+			fmt.Println("  /    : text filter (title contains)")
 			fmt.Println("  s    : sort")
 			fmt.Println("  q    : quit list view")
 			fmt.Println("  h    : hide help")
@@ -424,6 +425,23 @@ func listTasks(s *storage.Storage) {
 						}
 					}
 				}
+			}
+			if char == '/' {
+				// Quick text filter on Title Contains
+				keyboard.Close()
+				prompt := promptui.Prompt{Label: "Filter text (Title Contains)", Default: fState.Value}
+				value, err := prompt.Run()
+				if err == nil && strings.TrimSpace(value) != "" {
+					fState = filterState{Active: true, Kind: "Title Contains", Value: strings.TrimSpace(value)}
+					// rebuild from original
+					tasks = applyFilter(originalTasks, fState)
+					selectedIndex = 0
+					startIndex = 0
+				}
+				if err := keyboard.Open(); err != nil {
+					panic(err)
+				}
+				keyEvents = newKeyEvents()
 			}
 			if char == 'f' {
 				keyboard.Close()
