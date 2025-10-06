@@ -361,7 +361,7 @@ func listTasks(s *storage.Storage) {
 					selectedIndex--
 				}
 			case keyboard.KeyArrowDown:
-				if selectedIndex < len(tasks)-1 {
+				if selectedIndex <= len(tasks)-1 {
 					selectedIndex++
 				}
 			case keyboard.KeyEnter:
@@ -505,8 +505,8 @@ func listTasks(s *storage.Storage) {
 						}
 						width, height := getTerminalSize()
 						_ = width
-						if selectedIndex >= startIndex+height-2 {
-							startIndex = selectedIndex - height + 3
+						if selectedIndex >= startIndex+height-1 {
+							startIndex = selectedIndex - height + 1
 							if startIndex < 0 {
 								startIndex = 0
 							}
