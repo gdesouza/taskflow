@@ -272,8 +272,13 @@ func listTasks(s *storage.Storage) {
 				}
 			case keyboard.KeyEnter:
 				if len(tasks) > 0 {
+					// Close current keyboard listener to avoid concurrent GetKey calls
+					keyboard.Close()
 					showTaskDetails(s, originalTasks, &tasks[selectedIndex])
-					// after returning, keyboard reopened by showTaskDetails; recreate keyEvents
+					// Reopen keyboard and recreate keyEvents after returning from details view
+					if err := keyboard.Open(); err != nil {
+						panic(err)
+					}
 					keyEvents = newKeyEvents()
 				}
 			case keyboard.KeyEsc:
@@ -527,6 +532,11 @@ func sortTasks(tasks []models.Task) []models.Task {
 }
 
 func showTaskDetails(s *storage.Storage, originalTasks []models.Task, task *models.Task) {
+	// Ensure keyboard is opened exclusively for this details view
+	if err := keyboard.Open(); err != nil {
+		panic(err)
+	}
+	defer keyboard.Close()
 	fields := []string{"Title", "Status", "Priority", "Link", "Tags", "Notes"}
 	selectedIndex := 0
 
@@ -575,10 +585,12 @@ func showTaskDetails(s *storage.Storage, originalTasks []models.Task, task *mode
 				selectedIndex++
 			}
 		case keyboard.KeyEnter:
-			keyboard.Close() // Close keyboard before showing prompt
+			// Temporarily close raw mode for promptui interaction
+			keyboard.Close()
 			newValue := promptForValue(fields[selectedIndex], getFieldValue(task, fields[selectedIndex]))
 			setFieldValue(task, fields[selectedIndex], newValue)
 			s.UpdateTask(originalTasks, *task)
+			// Re-enter raw mode for navigation
 			if err := keyboard.Open(); err != nil {
 				panic(err)
 			}
