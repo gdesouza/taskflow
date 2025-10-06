@@ -147,6 +147,79 @@ func showMainMenuCustom() (string, error) {
 	}
 }
 
+// filterState stores the currently active filter so it can persist across
+// task detail views, edits, auto-reloads, etc.
+type filterState struct {
+	Active bool
+	Kind   string // Status | Priority | Tags | Title Contains
+	Value  string // raw value entered
+}
+
+func applyFilter(all []models.Task, fs filterState) []models.Task {
+	if !fs.Active {
+		return all
+	}
+	var filtered []models.Task
+	value := fs.Value
+	lowerValue := strings.ToLower(value)
+	words := strings.Fields(lowerValue)
+
+	for _, task := range all {
+		switch fs.Kind {
+		case "Status":
+			if task.Status == value {
+				filtered = append(filtered, task)
+			}
+		case "Priority":
+			if task.Priority == value {
+				filtered = append(filtered, task)
+			}
+		case "Tags":
+			for _, t := range task.Tags {
+				if t == value {
+					filtered = append(filtered, task)
+					break
+				}
+			}
+		case "Title Contains":
+			// All words must be contained (case-insensitive)
+			titleLower := strings.ToLower(task.Title)
+			ok := true
+			for _, w := range words {
+				if !strings.Contains(titleLower, w) {
+					ok = false
+					break
+				}
+			}
+			if ok {
+				filtered = append(filtered, task)
+			}
+		}
+	}
+	return filtered
+}
+
+// runFilterPrompt prompts user and returns new filter state.
+func runFilterPrompt(current filterState) filterState {
+	prompt := promptui.Select{
+		Label: "Filter by",
+		Items: []string{"Status", "Priority", "Tags", "Title Contains", "Clear Filters"},
+	}
+	_, result, err := prompt.Run()
+	if err != nil {
+		return current
+	}
+	if result == "Clear Filters" {
+		return filterState{}
+	}
+	prompt2 := promptui.Prompt{Label: fmt.Sprintf("Enter %s", result)}
+	value, err := prompt2.Run()
+	if err != nil || strings.TrimSpace(value) == "" {
+		return current
+	}
+	return filterState{Active: true, Kind: result, Value: strings.TrimSpace(value)}
+}
+
 func listTasks(s *storage.Storage) {
 	tasks, err := s.ReadTasks()
 	if err != nil {
@@ -197,6 +270,9 @@ func listTasks(s *storage.Storage) {
 	}
 	keyEvents := newKeyEvents()
 
+	// Persistent filter state
+	var fState filterState
+
 	for {
 		// Render
 		clearScreen()
@@ -207,13 +283,17 @@ func listTasks(s *storage.Storage) {
 			fmt.Println("  Enter: view details")
 			fmt.Println("  a    : add task")
 			fmt.Println("  x    : toggle done")
-			fmt.Println("  f    : filter")
+			fmt.Println("  f    : filter (persists until cleared)")
 			fmt.Println("  s    : sort")
 			fmt.Println("  q    : quit list view")
 			fmt.Println("  h    : hide help")
 			fmt.Println("  (auto-reloads on external file changes)")
 		} else {
-			fmt.Println("Tasks (press 'h' for help)")
+			if fState.Active {
+				fmt.Printf("Tasks (filter: %s = '%s') (press 'h' for help)\n", fState.Kind, fState.Value)
+			} else {
+				fmt.Println("Tasks (press 'h' for help)")
+			}
 		}
 
 		// Adjust startIndex if selectedIndex is out of view
@@ -230,7 +310,11 @@ func listTasks(s *storage.Storage) {
 		}
 
 		if len(tasks) == 0 {
-			fmt.Println("No tasks found.")
+			if fState.Active {
+				fmt.Println("No tasks match current filter.")
+			} else {
+				fmt.Println("No tasks found.")
+			}
 		} else {
 			for i := startIndex; i < endIndex; i++ {
 				task := tasks[i]
@@ -280,6 +364,27 @@ func listTasks(s *storage.Storage) {
 						panic(err)
 					}
 					keyEvents = newKeyEvents()
+					// If filter active, task may now not match; re-apply filter
+					if fState.Active {
+						// Rebuild from originalTasks then re-apply
+						fresh := applyFilter(originalTasks, fState)
+						// Try to keep selection on same ID
+						prevID := tasks[selectedIndex].ID
+						tasks = fresh
+						selectedIndex = 0
+						for i, t := range tasks {
+							if t.ID == prevID {
+								selectedIndex = i
+								break
+							}
+						}
+						if selectedIndex >= len(tasks) {
+							selectedIndex = len(tasks) - 1
+							if selectedIndex < 0 {
+								selectedIndex = 0
+							}
+						}
+					}
 				}
 			case keyboard.KeyEsc:
 				return
@@ -300,11 +405,37 @@ func listTasks(s *storage.Storage) {
 						task.Status = "done"
 					}
 					s.UpdateTask(originalTasks, *task)
+					// Re-apply filter after status change
+					if fState.Active {
+						// refresh originalTasks from storage for accurate state
+						if updated, err := s.ReadTasks(); err == nil {
+							originalTasks = make([]models.Task, len(updated))
+							copy(originalTasks, updated)
+							if fi, err := os.Stat(storagePath); err == nil {
+								lastMod = fi.ModTime()
+							}
+						}
+						tasks = applyFilter(originalTasks, fState)
+						if selectedIndex >= len(tasks) {
+							selectedIndex = len(tasks) - 1
+							if selectedIndex < 0 {
+								selectedIndex = 0
+							}
+						}
+					}
 				}
 			}
 			if char == 'f' {
 				keyboard.Close()
-				tasks = filterTasks(originalTasks)
+				fState = runFilterPrompt(fState)
+				// Always rebuild tasks from originalTasks when (re)setting filter
+				if fState.Active {
+					tasks = applyFilter(originalTasks, fState)
+				} else {
+					// Clear -> show all
+					tasks = make([]models.Task, len(originalTasks))
+					copy(tasks, originalTasks)
+				}
 				selectedIndex = 0
 				startIndex = 0
 				if err := keyboard.Open(); err != nil {
@@ -328,9 +459,14 @@ func listTasks(s *storage.Storage) {
 				if ok {
 					updated, err := s.ReadTasks()
 					if err == nil {
-						tasks = updated
-						originalTasks = make([]models.Task, len(tasks))
-						copy(originalTasks, tasks)
+						originalTasks = make([]models.Task, len(updated))
+						copy(originalTasks, updated)
+						// Re-apply filter if active
+						if fState.Active {
+							tasks = applyFilter(originalTasks, fState)
+						} else {
+							tasks = originalTasks
+						}
 						for i, t := range tasks {
 							if t.ID == newTask.ID {
 								selectedIndex = i
@@ -359,9 +495,13 @@ func listTasks(s *storage.Storage) {
 			if fi, err := os.Stat(storagePath); err == nil && fi.ModTime().After(lastMod) {
 				if updated, err2 := s.ReadTasks(); err2 == nil {
 					lastMod = fi.ModTime()
-					tasks = updated
-					originalTasks = make([]models.Task, len(tasks))
-					copy(originalTasks, tasks)
+					originalTasks = make([]models.Task, len(updated))
+					copy(originalTasks, updated)
+					if fState.Active {
+						tasks = applyFilter(originalTasks, fState)
+					} else {
+						tasks = updated
+					}
 					if selectedIndex >= len(tasks) {
 						if len(tasks) == 0 {
 							selectedIndex = 0
@@ -446,64 +586,7 @@ func interactiveCreateTask(s *storage.Storage) (models.Task, bool) {
 	return newTask, true
 }
 
-func filterTasks(tasks []models.Task) []models.Task {
-	prompt := promptui.Select{
-		Label: "Filter by",
-		Items: []string{"Status", "Priority", "Tags", "Title Contains", "Clear Filters"},
-	}
-	_, result, err := prompt.Run()
-	if err != nil {
-		return tasks
-	}
-
-	if result == "Clear Filters" {
-		return tasks
-	}
-
-	prompt2 := promptui.Prompt{
-		Label: fmt.Sprintf("Enter %s", result),
-	}
-	value, err := prompt2.Run()
-	if err != nil {
-		return tasks
-	}
-
-	var filteredTasks []models.Task
-	for _, task := range tasks {
-		switch result {
-		case "Status":
-			if task.Status == value {
-				filteredTasks = append(filteredTasks, task)
-			}
-		case "Priority":
-			if task.Priority == value {
-				filteredTasks = append(filteredTasks, task)
-			}
-		case "Tags":
-			for _, t := range task.Tags {
-				if t == value {
-					filteredTasks = append(filteredTasks, task)
-					break
-				}
-			}
-		case "Title Contains":
-			words := strings.Fields(strings.ToLower(value))
-			titleLower := strings.ToLower(task.Title)
-			all := true
-			for _, w := range words {
-				if !strings.Contains(titleLower, w) {
-					all = false
-					break
-				}
-			}
-			if all {
-				filteredTasks = append(filteredTasks, task)
-			}
-		}
-	}
-	return filteredTasks
-}
-
+// sortTasks unchanged, used to sort the currently displayed slice
 func sortTasks(tasks []models.Task) []models.Task {
 	prompt := promptui.Select{
 		Label: "Sort by",
@@ -563,7 +646,7 @@ func showTaskDetails(s *storage.Storage, originalTasks []models.Task, task *mode
 
 			line := fmt.Sprintf("%s: %s", field, value)
 			if i == selectedIndex {
-				fmt.Println("[7m" + line + "[0m")
+				fmt.Println("\x1b[7m" + line + "\x1b[0m")
 			} else {
 				fmt.Println(line)
 			}
