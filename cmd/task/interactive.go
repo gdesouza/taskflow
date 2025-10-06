@@ -1,10 +1,13 @@
 package task
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"sort"
 	"strings"
+	"taskflow/cmd/remote"
 	"taskflow/internal/config"
 	"taskflow/internal/models"
 	"taskflow/internal/storage"
@@ -57,6 +60,10 @@ var InteractiveCmd = &cobra.Command{
 		}
 
 		fmt.Println("🚀 Welcome to TaskFlow Interactive Mode")
+
+		// Capture initial hash for change detection (best-effort)
+		initialHash, _ := computeLocalHash()
+
 		for {
 			action, err := showMainMenuCustom()
 			if err != nil {
@@ -76,6 +83,8 @@ var InteractiveCmd = &cobra.Command{
 			case "stats":
 				showStats(s)
 			case "quit":
+				// Before quitting, check for unsynced changes (best-effort)
+				_ = promptSyncIfUnsynced(initialHash)
 				clearScreen()
 				fmt.Println("👋 Goodbye!")
 				return
@@ -791,4 +800,58 @@ func searchTask(s *storage.Storage) {
 
 func showStats(s *storage.Storage) {
 	StatsCmd.Run(StatsCmd, []string{})
+}
+
+// computeLocalHash replicates gist hashLocalState logic (local only) to avoid import cycle.
+func computeLocalHash() (string, error) {
+	mainPath := config.GetTasksFilePath()
+	archPath := config.GetArchiveFilePath()
+	m, err := os.ReadFile(mainPath)
+	if err != nil {
+		return "", err
+	}
+	a, err := os.ReadFile(archPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			a = []byte("tasks: []\n")
+		} else {
+			return "", err
+		}
+	}
+	h := sha256.Sum256(append(append(m, []byte("\n--\n")...), a...))
+	return hex.EncodeToString(h[:]), nil
+}
+
+// promptSyncIfUnsynced compares current local hash with last synced hash (if gist configured)
+// or the initial session hash; if unsynced changes exist, prompt user to sync.
+func promptSyncIfUnsynced(initialHash string) error {
+	lastHash := config.GetGistLastLocalHash()
+	current, err := computeLocalHash()
+	if err != nil {
+		return nil // silent best-effort
+	}
+	gistID := os.Getenv("TASKFLOW_GIST_TOKEN")
+	// Only prompt if gist token present (configured) and changes vs lastHash (if set) or session start.
+	changedSinceLast := lastHash != "" && current != lastHash
+	changedSinceStart := initialHash != "" && current != initialHash
+	if !changedSinceLast && !changedSinceStart {
+		return nil
+	}
+	if gistID == "" { // no token: just inform
+		fmt.Println("Unsynced changes exist (no gist token set, skipping sync).")
+		return nil
+	}
+	prompt := promptui.Prompt{Label: "Unsynced changes detected. Sync now? (y/N)", Default: "N"}
+	ans, err := prompt.Run()
+	if err != nil {
+		return nil
+	}
+	ans = strings.ToLower(strings.TrimSpace(ans))
+	if ans != "y" && ans != "yes" {
+		fmt.Println("Skipped sync.")
+		return nil
+	}
+	// Invoke gist-sync command programmatically
+	remote.GistSyncCmd.Run(remote.GistSyncCmd, []string{})
+	return nil
 }
