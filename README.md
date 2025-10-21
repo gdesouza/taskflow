@@ -1,5 +1,6 @@
 # TaskFlow
-[![Build Status](https://gdesouza.semaphoreci.com/badges/DevFlow/branches/master.svg?style=shields&key=dbff7292-7a82-4922-b626-72eefeef5b82)](https://gdesouza.semaphoreci.com/projects/DevFlow)
+[![Build Status](https://gdesouza.semaphoreci.com/badges/taskflow/branches/main.svg?style=shields&key=e7bbb21a-780d-49ac-bee0-8d93e27ee4e8)](https://gdesouza.semaphoreci.com/projects/taskflow)
+
 **Unified Task and Calendar Management Suite**
 
 TaskFlow is an integrated CLI for tasks, calendars, and visualization. It helps you manage your tasks and calendar events from the command line, providing a unified workflow to boost your productivity.
