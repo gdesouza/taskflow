@@ -2,6 +2,8 @@
 
 **Unified Task and Calendar Management Suite**
 
+[![Build Status](https://gdesouza.semaphoreci.com/badges/conflux/branches/master.svg?style=shields&key=fc860726-2edb-49bb-b2b6-d7ed8466a9d8)](https://gdesouza.semaphoreci.com/projects/conflux)
+
 TaskFlow is an integrated CLI for tasks, calendars, and visualization. It helps you manage your tasks and calendar events from the command line, providing a unified workflow to boost your productivity.
 
 ## Features
