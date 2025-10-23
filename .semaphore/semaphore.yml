@@ -7,6 +7,8 @@ agent:
 blocks:
   - name: Test
     task:
+      secrets:
+        - name: codecov
       jobs:
         - name: go test
           commands:
@@ -18,3 +20,6 @@ blocks:
             - go get ./...
             - make test
             - make build
+            - curl -Os https://uploader.codecov.io/latest/linux/codecov
+            - chmod +x codecov
+            - ./codecov
