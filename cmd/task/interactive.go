@@ -13,40 +13,16 @@ import (
 	"taskflow/internal/storage"
 	"time"
 
-	"github.com/eiannone/keyboard"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/google/uuid"
 	"github.com/manifoldco/promptui"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 )
 
-func init() {
-	TaskCmd.AddCommand(InteractiveCmd)
-}
+// Bubble Tea interactive mode (with persistent filter + sort state)
 
-// clearScreen clears the terminal screen (cross-platform)
-func clearScreen() {
-	fmt.Print("\033[H\033[2J")
-}
+func init() { TaskCmd.AddCommand(InteractiveCmd) }
 
-// truncateText truncates text to fit terminal width, Unicode-aware
-func truncateText(text string, width int) string {
-	if len([]rune(text)) > width {
-		return string([]rune(text)[:width-1]) + "…"
-	}
-	return text
-}
-
-// getTerminalSize returns the current terminal width and height
-func getTerminalSize() (width, height int) {
-	w, h, err := term.GetSize(int(os.Stdout.Fd()))
-	if err != nil {
-		return 80, 24 // default size
-	}
-	return w, h
-}
-
-// InteractiveCmd is the cobra command for interactive mode
 var InteractiveCmd = &cobra.Command{
 	Use:     "interactive",
 	Aliases: []string{"i"},
@@ -58,112 +34,365 @@ var InteractiveCmd = &cobra.Command{
 			fmt.Printf("Error creating storage: %v\n", err)
 			return
 		}
-
-		fmt.Println("🚀 Welcome to TaskFlow Interactive Mode")
-
-		// Capture initial hash for change detection (best-effort)
 		initialHash, _ := computeLocalHash()
-
-		for {
-			action, err := showMainMenuCustom()
-			if err != nil {
-				fmt.Printf("Error: %v\n", err)
-				return
-			}
-			clearScreen()
-			switch action {
-			case "list":
-				listTasks(s)
-			case "add":
-				addTask(s)
-			case "edit":
-				editTask(s)
-			case "search":
-				searchTask(s)
-			case "stats":
-				showStats(s)
-			case "quit":
-				// Before quitting, check for unsynced changes (best-effort)
-				_ = promptSyncIfUnsynced(initialHash)
-				clearScreen()
-				fmt.Println("👋 Goodbye!")
-				return
-			}
-			if action != "list" {
-				fmt.Println("\nPress Enter to continue...")
-				fmt.Scanln()
-			}
-			clearScreen()
-			fmt.Println("🚀 Welcome to TaskFlow Interactive Mode")
+		m := newModel(s, initialHash)
+		p := tea.NewProgram(m, tea.WithAltScreen())
+		if _, err := p.Run(); err != nil {
+			fmt.Printf("Error running program: %v\n", err)
 		}
 	},
 }
 
-func showMainMenuCustom() (string, error) {
-	menuItems := []string{
-		"📋 List tasks",
-		"➕ Add task",
-		"✏️ Edit task",
-		"🔍 Search tasks",
-		"📊 View statistics",
-		"🚪 Quit",
-	}
-	actions := []string{"list", "add", "edit", "search", "stats", "quit"}
-	selectedIndex := 0
+type uiMode int
 
-	if err := keyboard.Open(); err != nil {
-		return "", err
-	}
-	defer keyboard.Close()
+const (
+	modeMenu uiMode = iota
+	modeList
+)
 
-	storagePath := config.GetStoragePath()
-	for {
-		clearScreen()
-		fmt.Println("What would you like to do? (use arrow keys to navigate, Enter to select, 'q' to quit)")
-		fmt.Printf("Tasks file: %s\n\n", storagePath)
-
-		for i, item := range menuItems {
-			if i == selectedIndex {
-				fmt.Println("\033[7m" + item + "\033[0m")
-			} else {
-				fmt.Println(item)
-			}
-		}
-
-		char, key, err := keyboard.GetKey()
-		if err != nil {
-			return "", err
-		}
-
-		switch key {
-		case keyboard.KeyArrowUp:
-			if selectedIndex > 0 {
-				selectedIndex--
-			}
-		case keyboard.KeyArrowDown:
-			if selectedIndex < len(menuItems)-1 {
-				selectedIndex++
-			}
-		case keyboard.KeyEnter:
-			return actions[selectedIndex], nil
-		case keyboard.KeyEsc:
-			return "quit", nil
-		}
-
-		if char == 'q' {
-			return "quit", nil
-		}
-	}
-}
-
-// filterState stores the currently active filter so it can persist across
-// task detail views, edits, auto-reloads, etc.
 type filterState struct {
-	Active bool
-	Kind   string // Status | Priority | Tags | Title Contains
-	Value  string // raw value entered
+	Active      bool
+	Kind, Value string
 }
 
+type model struct {
+	storage     *storage.Storage
+	initialHash string
+	mode        uiMode
+	menuIndex   int
+	menuItems   []string
+	actions     []string
+	original    []models.Task
+	tasks       []models.Task
+	cursor      int
+	start       int
+	width       int
+	height      int
+	help        bool
+	filter      filterState
+	// sort persistence
+	sortActive  bool
+	sortKind    string // Priority | Status
+	storagePath string
+	lastMod     time.Time
+	quitMessage string
+}
+
+func newModel(s *storage.Storage, initialHash string) model {
+	menuItems := []string{"📋 List tasks", "➕ Add task", "✏️ Edit task", "🔍 Search tasks", "📊 View statistics", "🚪 Quit"}
+	actions := []string{"list", "add", "edit", "search", "stats", "quit"}
+	storagePath := config.GetStoragePath()
+	fi, _ := os.Stat(storagePath)
+	last := time.Time{}
+	if fi != nil {
+		last = fi.ModTime()
+	}
+	all, _ := s.ReadTasks()
+	orig := make([]models.Task, len(all))
+	copy(orig, all)
+	return model{storage: s, initialHash: initialHash, mode: modeMenu, menuItems: menuItems, actions: actions, original: orig, tasks: orig, storagePath: storagePath, lastMod: last}
+}
+
+func (m model) Init() tea.Cmd { return tea.Batch(pollFileCmd(), tea.EnterAltScreen) }
+
+func pollFileCmd() tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg { return filePollMsg{} })
+}
+
+type filePollMsg struct{}
+
+type detailReturnMsg struct{ id string }
+
+func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width, m.height = msg.Width, msg.Height
+	case filePollMsg:
+		// preserve currently selected task ID across external reloads
+		selectedID := ""
+		if len(m.tasks) > 0 && m.cursor < len(m.tasks) {
+			selectedID = m.tasks[m.cursor].ID
+		}
+		if fi, err := os.Stat(m.storagePath); err == nil && fi.ModTime().After(m.lastMod) {
+			updated, err2 := m.storage.ReadTasks()
+			if err2 == nil {
+				m.lastMod = fi.ModTime()
+				m.original = make([]models.Task, len(updated))
+				copy(m.original, updated)
+				m.rebuildTasksPreservingSelection(selectedID)
+			}
+		}
+		return m, pollFileCmd()
+	case tea.KeyMsg:
+		if m.mode == modeMenu {
+			return m.handleMenuKey(msg)
+		}
+		return m.handleListKey(msg)
+	case detailReturnMsg:
+		updated, err := m.storage.ReadTasks()
+		if err == nil {
+			m.original = make([]models.Task, len(updated))
+			copy(m.original, updated)
+			m.rebuildTasksPreservingSelection(msg.id)
+		}
+	}
+	return m, nil
+}
+
+// rebuildTasksPreservingSelection applies filter then sort; if focusID provided tries to keep selection on that task.
+func (m *model) rebuildTasksPreservingSelection(focusID string) {
+	// apply filter
+	if m.filter.Active {
+		m.tasks = applyFilter(m.original, m.filter)
+	} else {
+		m.tasks = m.original
+	}
+	// apply sort
+	if m.sortActive {
+		m.tasks = applySort(m.tasks, m.sortKind)
+	}
+	if focusID != "" {
+		for i, t := range m.tasks {
+			if t.ID == focusID {
+				m.cursor = i
+				break
+			}
+		}
+	}
+	if m.cursor >= len(m.tasks) {
+		m.cursor = len(m.tasks) - 1
+		if m.cursor < 0 {
+			m.cursor = 0
+		}
+	}
+}
+
+func (m model) handleMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c", "q", "esc":
+		m.quitMessage = "👋 Goodbye!"
+		return m, tea.Quit
+	case "up", "k":
+		if m.menuIndex > 0 {
+			m.menuIndex--
+		}
+	case "down", "j":
+		if m.menuIndex < len(m.menuItems)-1 {
+			m.menuIndex++
+		}
+	case "enter":
+		action := m.actions[m.menuIndex]
+		switch action {
+		case "list":
+			m.mode = modeList
+		case "add":
+			newTask, ok := interactiveCreateTask(m.storage)
+			if ok {
+				m.reloadAfterMutation(newTask.ID)
+			}
+		case "edit":
+			EditCmd.Run(EditCmd, []string{})
+			m.reloadAfterMutation("")
+		case "search":
+			prompt := promptui.Prompt{Label: "Search query"}
+			if q, err := prompt.Run(); err == nil {
+				SearchCmd.Run(SearchCmd, []string{q})
+			}
+		case "stats":
+			StatsCmd.Run(StatsCmd, []string{})
+		case "quit":
+			_ = promptSyncIfUnsynced(m.initialHash)
+			m.quitMessage = "👋 Goodbye!"
+			return m, tea.Quit
+		}
+	}
+	return m, nil
+}
+
+func (m *model) reloadAfterMutation(focusID string) {
+	updated, err := m.storage.ReadTasks()
+	if err != nil {
+		return
+	}
+	m.original = make([]models.Task, len(updated))
+	copy(m.original, updated)
+	m.rebuildTasksPreservingSelection(focusID)
+}
+
+func (m model) handleListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
+	case "ctrl+c":
+		m.quitMessage = "👋 Goodbye!"
+		return m, tea.Quit
+	case "esc", "q":
+		m.mode = modeMenu
+	case "up", "k":
+		if m.cursor > 0 {
+			m.cursor--
+		}
+	case "down", "j":
+		if m.cursor < len(m.tasks)-1 {
+			m.cursor++
+		}
+	case "enter":
+		if len(m.tasks) > 0 {
+			t := &m.tasks[m.cursor]
+			id := t.ID
+			showTaskDetails(m.storage, m.original, t)
+			return m, func() tea.Msg { return detailReturnMsg{id: id} }
+		}
+
+	case "x":
+		if len(m.tasks) > 0 {
+			t := &m.tasks[m.cursor]
+			if t.Status == "done" {
+				t.Status = "todo"
+			} else {
+				t.Status = "done"
+			}
+			m.storage.UpdateTask(m.original, *t)
+			m.reloadAfterMutation(t.ID)
+		}
+	case "/":
+		prompt := promptui.Prompt{Label: "Filter text (Title Contains)", Default: m.filter.Value}
+		if v, err := prompt.Run(); err == nil && strings.TrimSpace(v) != "" {
+			m.filter = filterState{Active: true, Kind: "Title Contains", Value: strings.TrimSpace(v)}
+			m.rebuildTasksPreservingSelection("")
+			m.cursor = 0
+			m.start = 0
+		}
+	case "f":
+		m.filter = runFilterPrompt(m.filter)
+		m.rebuildTasksPreservingSelection("")
+		m.cursor, m.start = 0, 0
+	case "s":
+		m.promptSort()
+		m.rebuildTasksPreservingSelection("")
+		m.cursor, m.start = 0, 0
+	case "a":
+		newTask, ok := interactiveCreateTask(m.storage)
+		if ok {
+			m.reloadAfterMutation(newTask.ID)
+		}
+	case "h":
+		m.help = !m.help
+	}
+	visible := m.height - 3
+	if visible < 1 {
+		visible = 1
+	}
+	if m.cursor < m.start {
+		m.start = m.cursor
+	}
+	if m.cursor >= m.start+visible {
+		m.start = m.cursor - visible + 1
+	}
+	return m, nil
+}
+
+func (m model) View() string {
+	if m.quitMessage != "" {
+		return m.quitMessage
+	}
+	if m.mode == modeMenu {
+		return m.renderMenu()
+	}
+	return m.renderList()
+}
+
+func (m model) renderMenu() string {
+	var b strings.Builder
+	b.WriteString("🚀 Welcome to TaskFlow Interactive Mode\n")
+	b.WriteString("What would you like to do? (↑/↓ Enter, q to quit)\n")
+	b.WriteString(fmt.Sprintf("Tasks file: %s\n\n", m.storagePath))
+	for i, item := range m.menuItems {
+		line := item
+		if i == m.menuIndex {
+			line = inverse(line)
+		}
+		b.WriteString(line + "\n")
+	}
+	return b.String()
+}
+
+func (m model) renderList() string {
+	var b strings.Builder
+	if m.help {
+		b.WriteString("Tasks - Help\n")
+		b.WriteString("  ↑/↓ or j/k : navigate\n")
+		b.WriteString("  Enter      : view/edit details\n")
+		b.WriteString("  a          : add task\n")
+		b.WriteString("  x          : toggle done\n")
+		b.WriteString("  f          : filter menu\n")
+		b.WriteString("  /          : text filter\n")
+		b.WriteString("  s          : sort\n")
+		b.WriteString("  h          : hide help\n")
+		b.WriteString("  q / esc    : back to menu\n")
+		b.WriteString("  (auto-reloads on external file changes)\n")
+	} else {
+		if m.filter.Active {
+			b.WriteString(fmt.Sprintf("Tasks (filter: %s = '%s')", m.filter.Kind, m.filter.Value))
+		} else {
+			b.WriteString("Tasks")
+		}
+		if m.sortActive {
+			b.WriteString(fmt.Sprintf(" (sorted: %s)", m.sortKind))
+		}
+		b.WriteString(" (press 'h' for help)\n")
+	}
+	if len(m.tasks) == 0 {
+		if m.filter.Active {
+			b.WriteString("No tasks match current filter.\n")
+		} else {
+			b.WriteString("No tasks found.\n")
+		}
+		return b.String()
+	}
+	visible := m.height - 3
+	if visible < 1 {
+		visible = 1
+	}
+	end := m.start + visible
+	if end > len(m.tasks) {
+		end = len(m.tasks)
+	}
+	for i := m.start; i < end; i++ {
+		t := m.tasks[i]
+		status := " "
+		if t.Status == "done" {
+			status = "x"
+		}
+		line := fmt.Sprintf("[%s] (%s) %s", status, t.Priority, t.Title)
+		line = truncateText(line, max(10, m.width))
+		if i == m.cursor {
+			line = inverse(line)
+		}
+		b.WriteString(line + "\n")
+	}
+	return b.String()
+}
+
+func inverse(s string) string { return "\x1b[7m" + s + "\x1b[0m" }
+
+func truncateText(text string, width int) string {
+	if width <= 0 {
+		return text
+	}
+	if len([]rune(text)) > width {
+		return string([]rune(text)[:width-1]) + "…"
+	}
+	return text
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// Filtering
 func applyFilter(all []models.Task, fs filterState) []models.Task {
 	if !fs.Active {
 		return all
@@ -172,7 +401,6 @@ func applyFilter(all []models.Task, fs filterState) []models.Task {
 	value := fs.Value
 	lowerValue := strings.ToLower(value)
 	words := strings.Fields(lowerValue)
-
 	for _, task := range all {
 		switch fs.Kind {
 		case "Status":
@@ -191,7 +419,6 @@ func applyFilter(all []models.Task, fs filterState) []models.Task {
 				}
 			}
 		case "Title Contains":
-			// All words must be contained (case-insensitive)
 			titleLower := strings.ToLower(task.Title)
 			ok := true
 			for _, w := range words {
@@ -208,12 +435,34 @@ func applyFilter(all []models.Task, fs filterState) []models.Task {
 	return filtered
 }
 
-// runFilterPrompt prompts user and returns new filter state.
-func runFilterPrompt(current filterState) filterState {
-	prompt := promptui.Select{
-		Label: "Filter by",
-		Items: []string{"Status", "Priority", "Tags", "Title Contains", "Clear Filters"},
+// Sorting persistence
+func applySort(tasks []models.Task, kind string) []models.Task {
+	switch kind {
+	case "Priority":
+		sort.Slice(tasks, func(i, j int) bool { return tasks[i].Priority > tasks[j].Priority })
+	case "Status":
+		sort.Slice(tasks, func(i, j int) bool { return tasks[i].Status < tasks[j].Status })
 	}
+	return tasks
+}
+
+func (m *model) promptSort() {
+	prompt := promptui.Select{Label: "Sort by", Items: []string{"Priority", "Status", "Default"}}
+	_, result, err := prompt.Run()
+	if err != nil {
+		return
+	}
+	if result == "Default" {
+		m.sortActive = false
+		m.sortKind = ""
+		return
+	}
+	m.sortActive = true
+	m.sortKind = result
+}
+
+func runFilterPrompt(current filterState) filterState {
+	prompt := promptui.Select{Label: "Filter by", Items: []string{"Status", "Priority", "Tags", "Title Contains", "Clear Filters"}}
 	_, result, err := prompt.Run()
 	if err != nil {
 		return current
@@ -229,346 +478,25 @@ func runFilterPrompt(current filterState) filterState {
 	return filterState{Active: true, Kind: result, Value: strings.TrimSpace(value)}
 }
 
-func listTasks(s *storage.Storage) {
-	tasks, err := s.ReadTasks()
-	if err != nil {
-		fmt.Printf("Error reading tasks: %v\n", err)
-		return
-	}
-
-	originalTasks := make([]models.Task, len(tasks))
-	copy(originalTasks, tasks)
-
-	selectedIndex := 0
-	startIndex := 0
-
-	if err := keyboard.Open(); err != nil {
-		panic(err)
-	}
-	defer keyboard.Close()
-
-	helpVisible := false
-
-	// File modification tracking for auto-reload
-	storagePath := config.GetStoragePath()
-	lastMod := time.Time{}
-	if fi, err := os.Stat(storagePath); err == nil {
-		lastMod = fi.ModTime()
-	}
-
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	type keyEvent struct {
-		char rune
-		key  keyboard.Key
-	}
-	newKeyEvents := func() chan keyEvent {
-		ch := make(chan keyEvent)
-		go func() {
-			for {
-				char, key, err := keyboard.GetKey()
-				if err != nil {
-					close(ch)
-					return
-				}
-				ch <- keyEvent{char: char, key: key}
-			}
-		}()
-		return ch
-	}
-	keyEvents := newKeyEvents()
-
-	// Persistent filter state
-	var fState filterState
-
-	for {
-		// Render
-		clearScreen()
-		width, height := getTerminalSize()
-		if helpVisible {
-			fmt.Println("Tasks - Help")
-			fmt.Println("  ↑/↓ : navigate")
-			fmt.Println("  Enter: view details")
-			fmt.Println("  a    : add task")
-			fmt.Println("  x    : toggle done")
-			fmt.Println("  f    : filter (persists until cleared)")
-			fmt.Println("  /    : text filter (title contains)")
-			fmt.Println("  s    : sort")
-			fmt.Println("  q    : quit list view")
-			fmt.Println("  h    : hide help")
-			fmt.Println("  (auto-reloads on external file changes)")
-		} else {
-			if fState.Active {
-				fmt.Printf("Tasks (filter: %s = '%s') (press 'h' for help)\n", fState.Kind, fState.Value)
-			} else {
-				fmt.Println("Tasks (press 'h' for help)")
-			}
-		}
-
-		// Adjust startIndex if selectedIndex is out of view
-		if selectedIndex < startIndex {
-			startIndex = selectedIndex
-		}
-		if selectedIndex >= startIndex+height-2 {
-			startIndex = selectedIndex - height + 3
-		}
-
-		endIndex := startIndex + height - 3
-		if endIndex > len(tasks) {
-			endIndex = len(tasks)
-		}
-
-		if len(tasks) == 0 {
-			if fState.Active {
-				fmt.Println("No tasks match current filter.")
-			} else {
-				fmt.Println("No tasks found.")
-			}
-		} else {
-			for i := startIndex; i < endIndex; i++ {
-				task := tasks[i]
-				status := " "
-				if task.Status == "done" {
-					status = "x"
-				}
-				line := fmt.Sprintf("[%s] (%s) %s", status, task.Priority, task.Title)
-				line = truncateText(line, width)
-				if i == selectedIndex {
-					fmt.Println("\033[7m" + line + "\033[0m")
-				} else {
-					fmt.Println(line)
-				}
-			}
-		}
-
-		// Event handling
-		select {
-		case ev, ok := <-keyEvents:
-			if !ok { // restart after a close (e.g., detail view reopening keyboard)
-				if err := keyboard.Open(); err == nil {
-					keyEvents = newKeyEvents()
-					continue
-				} else {
-					return
-				}
-			}
-			char := ev.char
-			key := ev.key
-			switch key {
-			case keyboard.KeyArrowUp:
-				if selectedIndex > 0 {
-					selectedIndex--
-				}
-			case keyboard.KeyArrowDown:
-				if selectedIndex <= len(tasks)-1 {
-					selectedIndex++
-				}
-			case keyboard.KeyEnter:
-				if len(tasks) > 0 {
-					// Close current keyboard listener to avoid concurrent GetKey calls
-					keyboard.Close()
-					showTaskDetails(s, originalTasks, &tasks[selectedIndex])
-					// Reopen keyboard and recreate keyEvents after returning from details view
-					if err := keyboard.Open(); err != nil {
-						panic(err)
-					}
-					keyEvents = newKeyEvents()
-					// If filter active, task may now not match; re-apply filter
-					if fState.Active {
-						// Rebuild from originalTasks then re-apply
-						fresh := applyFilter(originalTasks, fState)
-						// Try to keep selection on same ID
-						prevID := tasks[selectedIndex].ID
-						tasks = fresh
-						selectedIndex = 0
-						for i, t := range tasks {
-							if t.ID == prevID {
-								selectedIndex = i
-								break
-							}
-						}
-						if selectedIndex >= len(tasks) {
-							selectedIndex = len(tasks) - 1
-							if selectedIndex < 0 {
-								selectedIndex = 0
-							}
-						}
-					}
-				}
-			case keyboard.KeyEsc:
-				return
-			}
-
-			if char == 'q' {
-				return
-			}
-			if char == 'h' {
-				helpVisible = !helpVisible
-			}
-			if char == 'x' {
-				if len(tasks) > 0 {
-					task := &tasks[selectedIndex]
-					if task.Status == "done" {
-						task.Status = "todo"
-					} else {
-						task.Status = "done"
-					}
-					s.UpdateTask(originalTasks, *task)
-					// Re-apply filter after status change
-					if fState.Active {
-						// refresh originalTasks from storage for accurate state
-						if updated, err := s.ReadTasks(); err == nil {
-							originalTasks = make([]models.Task, len(updated))
-							copy(originalTasks, updated)
-							if fi, err := os.Stat(storagePath); err == nil {
-								lastMod = fi.ModTime()
-							}
-						}
-						tasks = applyFilter(originalTasks, fState)
-						if selectedIndex >= len(tasks) {
-							selectedIndex = len(tasks) - 1
-							if selectedIndex < 0 {
-								selectedIndex = 0
-							}
-						}
-					}
-				}
-			}
-			if char == '/' {
-				// Quick text filter on Title Contains
-				keyboard.Close()
-				prompt := promptui.Prompt{Label: "Filter text (Title Contains)", Default: fState.Value}
-				value, err := prompt.Run()
-				if err == nil && strings.TrimSpace(value) != "" {
-					fState = filterState{Active: true, Kind: "Title Contains", Value: strings.TrimSpace(value)}
-					// rebuild from original
-					tasks = applyFilter(originalTasks, fState)
-					selectedIndex = 0
-					startIndex = 0
-				}
-				if err := keyboard.Open(); err != nil {
-					panic(err)
-				}
-				keyEvents = newKeyEvents()
-			}
-			if char == 'f' {
-				keyboard.Close()
-				fState = runFilterPrompt(fState)
-				// Always rebuild tasks from originalTasks when (re)setting filter
-				if fState.Active {
-					tasks = applyFilter(originalTasks, fState)
-				} else {
-					// Clear -> show all
-					tasks = make([]models.Task, len(originalTasks))
-					copy(tasks, originalTasks)
-				}
-				selectedIndex = 0
-				startIndex = 0
-				if err := keyboard.Open(); err != nil {
-					panic(err)
-				}
-				keyEvents = newKeyEvents()
-			}
-			if char == 's' {
-				keyboard.Close()
-				tasks = sortTasks(tasks)
-				selectedIndex = 0
-				startIndex = 0
-				if err := keyboard.Open(); err != nil {
-					panic(err)
-				}
-				keyEvents = newKeyEvents()
-			}
-			if char == 'a' {
-				keyboard.Close()
-				newTask, ok := interactiveCreateTask(s)
-				if ok {
-					updated, err := s.ReadTasks()
-					if err == nil {
-						originalTasks = make([]models.Task, len(updated))
-						copy(originalTasks, updated)
-						// Re-apply filter if active
-						if fState.Active {
-							tasks = applyFilter(originalTasks, fState)
-						} else {
-							tasks = originalTasks
-						}
-						for i, t := range tasks {
-							if t.ID == newTask.ID {
-								selectedIndex = i
-								break
-							}
-						}
-						if selectedIndex < startIndex {
-							startIndex = selectedIndex
-						}
-						width, height := getTerminalSize()
-						_ = width
-						if selectedIndex >= startIndex+height-1 {
-							startIndex = selectedIndex - height + 1
-							if startIndex < 0 {
-								startIndex = 0
-							}
-						}
-					}
-				}
-				if err := keyboard.Open(); err != nil {
-					panic(err)
-				}
-				keyEvents = newKeyEvents()
-			}
-		case <-ticker.C:
-			if fi, err := os.Stat(storagePath); err == nil && fi.ModTime().After(lastMod) {
-				if updated, err2 := s.ReadTasks(); err2 == nil {
-					lastMod = fi.ModTime()
-					originalTasks = make([]models.Task, len(updated))
-					copy(originalTasks, updated)
-					if fState.Active {
-						tasks = applyFilter(originalTasks, fState)
-					} else {
-						tasks = updated
-					}
-					if selectedIndex >= len(tasks) {
-						if len(tasks) == 0 {
-							selectedIndex = 0
-						} else {
-							selectedIndex = len(tasks) - 1
-						}
-					}
-				}
-			}
-		}
-	}
-}
-
+// Creation
 func interactiveCreateTask(s *storage.Storage) (models.Task, bool) {
-	// Title (required)
 	titlePrompt := promptui.Prompt{Label: "Title (required)"}
 	title, err := titlePrompt.Run()
 	if err != nil || strings.TrimSpace(title) == "" {
 		return models.Task{}, false
 	}
-
-	// Priority select
 	prioritySelect := promptui.Select{Label: "Priority", Items: []string{"high", "medium", "low"}, Size: 3}
 	_, priority, err := prioritySelect.Run()
 	if err != nil {
 		priority = "medium"
 	}
-
-	// Status select
 	statusSelect := promptui.Select{Label: "Status", Items: []string{"todo", "in-progress", "done"}, Size: 3}
 	_, status, err := statusSelect.Run()
 	if err != nil {
 		status = "todo"
 	}
-
-	// Link
 	linkPrompt := promptui.Prompt{Label: "Link (optional)", Default: ""}
 	link, _ := linkPrompt.Run()
-
-	// Tags
 	tagsPrompt := promptui.Prompt{Label: "Tags (comma separated, optional)", Default: ""}
 	tagsStr, _ := tagsPrompt.Run()
 	var tags []string
@@ -578,26 +506,11 @@ func interactiveCreateTask(s *storage.Storage) (models.Task, bool) {
 			tags = append(tags, trimmed)
 		}
 	}
-
-	// Notes
 	notesPrompt := promptui.Prompt{Label: "Notes (optional)", Default: ""}
 	notes, _ := notesPrompt.Run()
-
-	// Due date
 	duePrompt := promptui.Prompt{Label: "Due date (RFC3339, optional)", Default: ""}
 	due, _ := duePrompt.Run()
-
-	newTask := models.Task{
-		ID:       uuid.New().String(),
-		Title:    title,
-		Status:   status,
-		Priority: priority,
-		Link:     link,
-		Tags:     tags,
-		Notes:    notes,
-		DueDate:  due,
-	}
-
+	newTask := models.Task{ID: uuid.New().String(), Title: title, Status: status, Priority: priority, Link: link, Tags: tags, Notes: notes, DueDate: due}
 	tasks, err := s.ReadTasks()
 	if err != nil {
 		fmt.Printf("Error reading tasks: %v\n", err)
@@ -608,107 +521,45 @@ func interactiveCreateTask(s *storage.Storage) (models.Task, bool) {
 		fmt.Printf("Error writing tasks: %v\n", err)
 		return models.Task{}, false
 	}
-
 	fmt.Printf("Added task: %s\n", newTask.Title)
 	return newTask, true
 }
 
-// sortTasks unchanged, used to sort the currently displayed slice
-func sortTasks(tasks []models.Task) []models.Task {
-	prompt := promptui.Select{
-		Label: "Sort by",
-		Items: []string{"Priority", "Status", "Default"},
-	}
-	_, result, err := prompt.Run()
-	if err != nil {
-		return tasks
-	}
-
-	switch result {
-	case "Priority":
-		sort.Slice(tasks, func(i, j int) bool {
-			return tasks[i].Priority > tasks[j].Priority
-		})
-	case "Status":
-		sort.Slice(tasks, func(i, j int) bool {
-			return tasks[i].Status < tasks[j].Status
-		})
-	case "Default":
-		sort.Slice(tasks, func(i, j int) bool {
-			return tasks[i].ID < tasks[j].ID
-		})
-	}
-	return tasks
-}
-
+// Details
 func showTaskDetails(s *storage.Storage, originalTasks []models.Task, task *models.Task) {
-	// Ensure keyboard is opened exclusively for this details view
-	if err := keyboard.Open(); err != nil {
-		panic(err)
-	}
-	defer keyboard.Close()
 	fields := []string{"Title", "Status", "Priority", "Link", "Tags", "Notes"}
 	selectedIndex := 0
-
 	for {
-		clearScreen()
-		fmt.Printf("Task Details (use arrow keys to navigate, Enter to edit, 'q' or Esc to return)\n\n")
-
-		for i, field := range fields {
-			var value string
-			switch field {
-			case "Title":
-				value = task.Title
-			case "Status":
-				value = task.Status
-			case "Priority":
-				value = task.Priority
-			case "Link":
-				value = task.Link
-			case "Tags":
-				value = strings.Join(task.Tags, ", ")
-			case "Notes":
-				value = task.Notes
-			}
-
-			line := fmt.Sprintf("%s: %s", field, value)
+		fmt.Printf("Task Details (use arrow keys to navigate, Enter to edit, 'q' to return)\n\n")
+		for i, f := range fields {
+			val := getFieldValue(task, f)
+			line := fmt.Sprintf("%s: %s", f, val)
 			if i == selectedIndex {
-				fmt.Println("\x1b[7m" + line + "\x1b[0m")
+				fmt.Println(inverse(line))
 			} else {
 				fmt.Println(line)
 			}
 		}
 		fmt.Printf("\nID: %s\n", task.ID)
-
-		char, key, err := keyboard.GetKey()
+		prompt := promptui.Select{Label: "Action", Items: []string{"Up", "Down", "Edit", "Done"}}
+		_, choice, err := prompt.Run()
 		if err != nil {
-			panic(err)
+			return
 		}
-
-		switch key {
-		case keyboard.KeyArrowUp:
+		switch choice {
+		case "Up":
 			if selectedIndex > 0 {
 				selectedIndex--
 			}
-		case keyboard.KeyArrowDown:
+		case "Down":
 			if selectedIndex < len(fields)-1 {
 				selectedIndex++
 			}
-		case keyboard.KeyEnter:
-			// Temporarily close raw mode for promptui interaction
-			keyboard.Close()
+		case "Edit":
 			newValue := promptForValue(fields[selectedIndex], getFieldValue(task, fields[selectedIndex]))
 			setFieldValue(task, fields[selectedIndex], newValue)
 			s.UpdateTask(originalTasks, *task)
-			// Re-enter raw mode for navigation
-			if err := keyboard.Open(); err != nil {
-				panic(err)
-			}
-		case keyboard.KeyEsc:
-			return
-		}
-
-		if char == 'q' {
+		case "Done":
 			return
 		}
 	}
@@ -750,59 +601,15 @@ func setFieldValue(task *models.Task, field, value string) {
 }
 
 func promptForValue(field, defaultValue string) string {
-	prompt := promptui.Prompt{
-		Label:   fmt.Sprintf("Enter new %s", field),
-		Default: defaultValue,
-	}
-
-	result, err := prompt.Run()
+	prompt := promptui.Prompt{Label: fmt.Sprintf("Enter new %s", field), Default: defaultValue}
+	res, err := prompt.Run()
 	if err != nil {
 		return defaultValue
 	}
-	return result
+	return res
 }
 
-func addTask(s *storage.Storage) {
-	prompt := promptui.Prompt{
-		Label: "Task title",
-	}
-
-	title, err := prompt.Run()
-	if err != nil {
-		fmt.Printf("Prompt failed %v\n", err)
-		return
-	}
-
-	AddCmd.Run(AddCmd, []string{title})
-}
-
-func doneTask(s *storage.Storage) {
-	DoneCmd.Run(DoneCmd, []string{})
-}
-
-func editTask(s *storage.Storage) {
-	EditCmd.Run(EditCmd, []string{})
-}
-
-func searchTask(s *storage.Storage) {
-	prompt := promptui.Prompt{
-		Label: "Search query",
-	}
-
-	query, err := prompt.Run()
-	if err != nil {
-		fmt.Printf("Prompt failed %v\n", err)
-		return
-	}
-
-	SearchCmd.Run(SearchCmd, []string{query})
-}
-
-func showStats(s *storage.Storage) {
-	StatsCmd.Run(StatsCmd, []string{})
-}
-
-// computeLocalHash replicates gist hashLocalState logic (local only) to avoid import cycle.
+// Hash + sync helpers
 func computeLocalHash() (string, error) {
 	mainPath := config.GetTasksFilePath()
 	archPath := config.GetArchiveFilePath()
@@ -822,22 +629,19 @@ func computeLocalHash() (string, error) {
 	return hex.EncodeToString(h[:]), nil
 }
 
-// promptSyncIfUnsynced compares current local hash with last synced hash (if gist configured)
-// or the initial session hash; if unsynced changes exist, prompt user to sync.
 func promptSyncIfUnsynced(initialHash string) error {
 	lastHash := config.GetGistLastLocalHash()
 	current, err := computeLocalHash()
 	if err != nil {
-		return nil // silent best-effort
+		return nil
 	}
 	gistID := os.Getenv("TASKFLOW_GIST_TOKEN")
-	// Only prompt if gist token present (configured) and changes vs lastHash (if set) or session start.
 	changedSinceLast := lastHash != "" && current != lastHash
 	changedSinceStart := initialHash != "" && current != initialHash
 	if !changedSinceLast && !changedSinceStart {
 		return nil
 	}
-	if gistID == "" { // no token: just inform
+	if gistID == "" {
 		fmt.Println("Unsynced changes exist (no gist token set, skipping sync).")
 		return nil
 	}
@@ -851,7 +655,6 @@ func promptSyncIfUnsynced(initialHash string) error {
 		fmt.Println("Skipped sync.")
 		return nil
 	}
-	// Invoke gist-sync command programmatically
 	remote.GistSyncCmd.Run(remote.GistSyncCmd, []string{})
 	return nil
 }
