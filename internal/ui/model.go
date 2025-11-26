@@ -29,9 +29,11 @@ type Model struct {
 	cursor   int
 
 	// Filter / search
-	filterActive bool
-	filterKind   string
-	filterValue  string
+	filterActive   bool
+	filterKind     string
+	filterValue    string
+	enteringFilter bool
+	filterInput    textinput.Model
 
 	// Sort
 	sortActive bool
@@ -95,6 +97,11 @@ func pollFileCmd() tea.Cmd {
 func (m *Model) Init() tea.Cmd {
 	m.editInput = textinput.New()
 	m.editInput.Prompt = "> "
+
+	m.filterInput = textinput.New()
+	m.filterInput.Prompt = "Filter: "
+	m.filterInput.Placeholder = "Enter text to filter tasks..."
+
 	return tea.Batch(pollFileCmd(), tea.EnterAltScreen)
 }
 
@@ -114,6 +121,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, pollFileCmd()
 	case tea.KeyMsg:
+		if m.enteringFilter {
+			return m.handleFilterInputKey(msg)
+		}
 		if m.showingHelp {
 			return m.handleHelpKey(msg)
 		}
@@ -260,6 +270,35 @@ func (m *Model) handleConfirmDeleteKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) handleFilterInputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch k.Type {
+	case tea.KeyEsc:
+		// Cancel filter input
+		m.enteringFilter = false
+		m.filterInput.Blur()
+		return m, nil
+	case tea.KeyEnter:
+		// Apply filter
+		val := strings.TrimSpace(m.filterInput.Value())
+		if val == "" {
+			m.filterActive = false
+			m.filterValue = ""
+		} else {
+			m.filterActive = true
+			m.filterKind = "Title Contains"
+			m.filterValue = val
+		}
+		m.rebuild("")
+		m.enteringFilter = false
+		m.filterInput.Blur()
+		return m, nil
+	}
+	// Pass input to the text input bubble
+	var cmd tea.Cmd
+	m.filterInput, cmd = m.filterInput.Update(k)
+	return m, cmd
+}
+
 func (m *Model) handleHelpKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch k.String() {
 	case "esc", "q", "h", "?":
@@ -311,19 +350,18 @@ func (m *Model) handleListKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.reloadAfterMutation(t.ID)
 		}
 	case "/": // text filter
-		fmt.Print("Filter text: ")
-		var v string
-		fmt.Scanln(&v)
-		v = strings.TrimSpace(v)
-		if v == "" {
+		// Enter filter input mode
+		m.enteringFilter = true
+		m.filterInput.SetValue(m.filterValue)
+		m.filterInput.Focus()
+		return m, nil
+	case "c": // clear filter
+		if m.filterActive {
 			m.filterActive = false
 			m.filterValue = ""
-		} else {
-			m.filterActive = true
-			m.filterKind = "Title Contains"
-			m.filterValue = v
+			m.filterInput.SetValue("")
+			m.rebuild("")
 		}
-		m.rebuild("")
 	case "s": // cycle sort
 		if !m.sortActive {
 			m.sortActive = true
@@ -592,6 +630,10 @@ func (m *Model) View() string {
 		return m.quitMessage
 	}
 
+	if m.enteringFilter {
+		return m.renderFilterInput()
+	}
+
 	if m.showingHelp {
 		return m.renderHelpBox()
 	}
@@ -681,7 +723,7 @@ func (m *Model) renderTaskList() string {
 	}
 
 	content.WriteString("\n")
-	content.WriteString(statusStyle.Render(" q:quit h:help ↑/↓:nav x:toggle /:filter s:sort a:add d:delete A:archive e:edit "))
+	content.WriteString(statusStyle.Render(" q:quit h:help ↑/↓:nav x:toggle /:filter c:clear s:sort a:add d:delete A:archive e:edit "))
 
 	// Box style for task list
 	boxStyle := lipgloss.NewStyle().
@@ -830,6 +872,26 @@ func (m *Model) renderDeleteConfirmation() string {
 	return positioned
 }
 
+func (m *Model) renderFilterInput() string {
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("62")).
+		Padding(1, 2).
+		Width(60)
+
+	var content strings.Builder
+	content.WriteString(lipgloss.NewStyle().Bold(true).Render("Filter Tasks") + "\n\n")
+	content.WriteString("Enter text to filter tasks by title:\n\n")
+	content.WriteString(m.filterInput.View() + "\n\n")
+	content.WriteString(statusStyle.Render(" [Enter:apply Esc:cancel] "))
+
+	box := boxStyle.Render(content.String())
+
+	// center the box
+	positioned := lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	return positioned
+}
+
 func (m *Model) renderHelpBox() string {
 	// Build help content as lines
 	helpLines := []string{
@@ -850,6 +912,7 @@ func (m *Model) renderHelpBox() string {
 		"",
 		lipgloss.NewStyle().Bold(true).Render("Filtering & Sorting:"),
 		"  /           Filter tasks by title",
+		"  c           Clear filter",
 		"  s           Cycle sort (Priority → Status → None)",
 		"",
 		lipgloss.NewStyle().Bold(true).Render("Detail View:"),
