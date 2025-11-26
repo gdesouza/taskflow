@@ -48,6 +48,10 @@ type Model struct {
 	addEditingField bool
 	newTask         models.Task
 
+	// Delete confirmation mode
+	confirmingDelete bool
+	taskToDelete     *models.Task
+
 	// File polling
 	storagePath string
 	lastMod     time.Time
@@ -104,6 +108,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, pollFileCmd()
 	case tea.KeyMsg:
+		if m.confirmingDelete {
+			return m.handleConfirmDeleteKey(msg)
+		}
 		if m.addingTask {
 			return m.handleAddTaskKey(msg)
 		}
@@ -215,6 +222,35 @@ func (m *Model) handleAddTaskKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) handleConfirmDeleteKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch k.String() {
+	case "y", "Y":
+		// Confirm delete
+		if m.taskToDelete != nil {
+			// Remove task from allTasks
+			newTasks := make([]models.Task, 0, len(m.allTasks)-1)
+			for _, t := range m.allTasks {
+				if t.ID != m.taskToDelete.ID {
+					newTasks = append(newTasks, t)
+				}
+			}
+			// Write to storage
+			if err := m.storage.WriteTasks(newTasks); err == nil {
+				m.allTasks = newTasks
+				m.rebuild("")
+			}
+		}
+		// Reset confirmation state
+		m.confirmingDelete = false
+		m.taskToDelete = nil
+	case "n", "N", "esc":
+		// Cancel delete
+		m.confirmingDelete = false
+		m.taskToDelete = nil
+	}
+	return m, nil
+}
+
 func (m *Model) handleListKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := k.String()
 	switch key {
@@ -275,6 +311,13 @@ func (m *Model) handleListKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.addingTask = true
 		m.addFieldIndex = 0
 		m.addEditingField = false
+	case "d": // delete task
+		if len(m.view) > 0 {
+			// Copy current task for confirmation
+			current := m.view[m.cursor]
+			m.taskToDelete = &current
+			m.confirmingDelete = true
+		}
 	case "enter", "e": // open detail box
 		if len(m.view) > 0 {
 			// copy current task for detail view
@@ -470,6 +513,10 @@ func (m *Model) View() string {
 		return m.quitMessage
 	}
 
+	if m.confirmingDelete {
+		return m.renderDeleteConfirmation()
+	}
+
 	if m.addingTask {
 		return m.renderAddTaskBox()
 	}
@@ -551,7 +598,7 @@ func (m *Model) renderTaskList() string {
 	}
 
 	content.WriteString("\n")
-	content.WriteString(statusStyle.Render(" q:quit ↑/↓:nav x:toggle /:filter s:sort a:add e:edit "))
+	content.WriteString(statusStyle.Render(" q:quit ↑/↓:nav x:toggle /:filter s:sort a:add d:delete e:edit "))
 
 	// Box style for task list
 	boxStyle := lipgloss.NewStyle().
@@ -658,6 +705,40 @@ func (m *Model) renderAddTaskBox() string {
 			content.WriteString(statusStyle.Render(" [↑/↓:navigate e:edit Ctrl+S:save Esc:cancel] "))
 		}
 	}
+
+	box := boxStyle.Render(content.String())
+
+	// center the box
+	positioned := lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	return positioned
+}
+
+func (m *Model) renderDeleteConfirmation() string {
+	if m.taskToDelete == nil {
+		return "Error: no task to delete"
+	}
+
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("196")). // Red border for warning
+		Padding(1, 2).
+		Width(60)
+
+	var content strings.Builder
+	content.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196")).Render("Delete Task") + "\n\n")
+	content.WriteString("Are you sure you want to delete this task?\n\n")
+
+	// Show task details
+	content.WriteString(lipgloss.NewStyle().Bold(true).Render("Title: ") + m.taskToDelete.Title + "\n")
+	if m.taskToDelete.Status != "" {
+		content.WriteString(lipgloss.NewStyle().Bold(true).Render("Status: ") + m.taskToDelete.Status + "\n")
+	}
+	if m.taskToDelete.Priority != "" {
+		content.WriteString(lipgloss.NewStyle().Bold(true).Render("Priority: ") + m.taskToDelete.Priority + "\n")
+	}
+
+	content.WriteString("\n")
+	content.WriteString(statusStyle.Render(" [Y:confirm N/Esc:cancel] "))
 
 	box := boxStyle.Render(content.String())
 
