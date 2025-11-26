@@ -1,0 +1,502 @@
+package ui
+
+import (
+	"fmt"
+	"os"
+	"sort"
+	"strings"
+	"taskflow/internal/models"
+	"taskflow/internal/storage"
+	"time"
+
+	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+)
+
+// Model is the root Bubble Tea model for the new interactive UI.
+type Model struct {
+	storage     *storage.Storage
+	initialHash string
+
+	width, height int
+
+	// Task state
+	allTasks []models.Task // canonical slice
+	view     []models.Task // filtered/sorted slice
+	cursor   int
+
+	// Filter / search
+	filterActive bool
+	filterKind   string
+	filterValue  string
+
+	// Sort
+	sortActive bool
+	sortKind   string // Priority | Status
+
+	// Detail box edit mode
+	viewingDetail    bool
+	detailFieldIndex int
+	editingField     bool
+	editInput        textinput.Model
+	detailTask       *models.Task
+
+	// File polling
+	storagePath string
+	lastMod     time.Time
+
+	// Quit message
+	quitMessage string
+}
+
+var fieldNames = []string{"Title", "Status", "Priority", "Link", "Tags", "Notes", "DueDate"}
+
+// New constructs a new Model.
+func New(s *storage.Storage, initialHash string, storagePath string) *Model {
+	all, _ := s.ReadTasks()
+	m := &Model{
+		storage:     s,
+		initialHash: initialHash,
+		allTasks:    all,
+		view:        all,
+		storagePath: storagePath,
+	}
+	if fi, err := os.Stat(storagePath); err == nil {
+		m.lastMod = fi.ModTime()
+	}
+	return m
+}
+
+// polling message
+type filePollMsg struct{}
+
+func pollFileCmd() tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg { return filePollMsg{} })
+}
+
+// Init implements tea.Model.
+func (m *Model) Init() tea.Cmd {
+	m.editInput = textinput.New()
+	m.editInput.Prompt = "> "
+	return tea.Batch(pollFileCmd(), tea.EnterAltScreen)
+}
+
+// Update handles messages.
+func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width, m.height = msg.Width, msg.Height
+	case filePollMsg:
+		if fi, err := os.Stat(m.storagePath); err == nil && fi.ModTime().After(m.lastMod) {
+			updated, err2 := m.storage.ReadTasks()
+			if err2 == nil {
+				m.lastMod = fi.ModTime()
+				m.allTasks = updated
+				m.rebuild("")
+			}
+		}
+		return m, pollFileCmd()
+	case tea.KeyMsg:
+		if m.viewingDetail {
+			return m.handleDetailKey(msg)
+		}
+		return m.handleListKey(msg)
+	}
+	return m, nil
+}
+
+func (m *Model) handleDetailKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.editingField {
+		// editing a field value
+		switch k.Type {
+		case tea.KeyEsc:
+			m.editingField = false
+			return m, nil
+		case tea.KeyEnter:
+			val := strings.TrimSpace(m.editInput.Value())
+			m.applyFieldEdit(val)
+			m.editingField = false
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.editInput, cmd = m.editInput.Update(k)
+		return m, cmd
+	}
+
+	// navigating detail box fields
+	switch k.String() {
+	case "esc", "q":
+		m.viewingDetail = false
+		m.detailTask = nil
+		m.detailFieldIndex = 0
+		return m, nil
+	case "up", "k":
+		if m.detailFieldIndex > 0 {
+			m.detailFieldIndex--
+		}
+	case "down", "j":
+		if m.detailFieldIndex < len(fieldNames)-1 {
+			m.detailFieldIndex++
+		}
+	case "enter", "e":
+		// start editing current field
+		m.editingField = true
+		m.editInput.SetValue(m.getFieldValue(fieldNames[m.detailFieldIndex]))
+		m.editInput.Focus()
+	}
+	return m, nil
+}
+
+func (m *Model) handleListKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := k.String()
+	switch key {
+	case "ctrl+c", "q":
+		m.quitMessage = "👋 Goodbye"
+		return m, tea.Quit
+	case "up", "k":
+		if m.cursor > 0 {
+			m.cursor--
+		}
+	case "down", "j":
+		if m.cursor < len(m.view)-1 {
+			m.cursor++
+		}
+	case "x": // toggle done
+		if len(m.view) > 0 {
+			t := &m.view[m.cursor]
+			if t.Status == "done" {
+				t.Status = "todo"
+			} else {
+				t.Status = "done"
+			}
+			m.storage.UpdateTask(m.allTasks, *t)
+			m.reloadAfterMutation(t.ID)
+		}
+	case "/": // text filter
+		fmt.Print("Filter text: ")
+		var v string
+		fmt.Scanln(&v)
+		v = strings.TrimSpace(v)
+		if v == "" {
+			m.filterActive = false
+			m.filterValue = ""
+		} else {
+			m.filterActive = true
+			m.filterKind = "Title Contains"
+			m.filterValue = v
+		}
+		m.rebuild("")
+	case "s": // cycle sort
+		if !m.sortActive {
+			m.sortActive = true
+			m.sortKind = "Priority"
+		} else if m.sortKind == "Priority" {
+			m.sortKind = "Status"
+		} else {
+			m.sortActive = false
+			m.sortKind = ""
+		}
+		m.rebuild("")
+	case "a": // add task
+		var title string
+		fmt.Print("Title: ")
+		fmt.Scanln(&title)
+		title = strings.TrimSpace(title)
+		if title == "" {
+			break
+		}
+		newTask := models.Task{ID: fmt.Sprintf("%d", time.Now().UnixNano()), Title: title, Status: "todo", Priority: "medium"}
+		tasks := append(m.allTasks, newTask)
+		if err := m.storage.WriteTasks(tasks); err == nil {
+			m.allTasks = tasks
+			m.reloadAfterMutation(newTask.ID)
+		}
+	case "enter", "e": // open detail box
+		if len(m.view) > 0 {
+			// copy current task for detail view
+			current := m.view[m.cursor]
+			m.detailTask = &current
+			m.viewingDetail = true
+			m.detailFieldIndex = 0
+		}
+	}
+	return m, nil
+}
+
+func (m *Model) getFieldValue(fieldName string) string {
+	if m.detailTask == nil {
+		return ""
+	}
+	switch fieldName {
+	case "Title":
+		return m.detailTask.Title
+	case "Status":
+		return m.detailTask.Status
+	case "Priority":
+		return m.detailTask.Priority
+	case "Link":
+		return m.detailTask.Link
+	case "Tags":
+		return strings.Join(m.detailTask.Tags, ", ")
+	case "Notes":
+		return m.detailTask.Notes
+	case "DueDate":
+		return m.detailTask.DueDate
+	}
+	return ""
+}
+
+func (m *Model) applyFieldEdit(val string) {
+	if m.detailTask == nil || val == "" {
+		return
+	}
+	fieldName := fieldNames[m.detailFieldIndex]
+	// apply to detailTask
+	switch fieldName {
+	case "Title":
+		m.detailTask.Title = val
+	case "Status":
+		if val == "todo" || val == "in-progress" || val == "done" {
+			m.detailTask.Status = val
+		}
+	case "Priority":
+		if val == "high" || val == "medium" || val == "low" {
+			m.detailTask.Priority = val
+		}
+	case "Link":
+		m.detailTask.Link = val
+	case "Tags":
+		m.detailTask.Tags = splitTags(val)
+	case "Notes":
+		m.detailTask.Notes = val
+	case "DueDate":
+		m.detailTask.DueDate = val
+	}
+	// persist to storage
+	m.storage.UpdateTask(m.allTasks, *m.detailTask)
+	m.reloadAfterMutation(m.detailTask.ID)
+}
+
+func splitTags(s string) []string {
+	var out []string
+	for _, t := range strings.Split(s, ",") {
+		v := strings.TrimSpace(t)
+		if v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func (m *Model) reloadAfterMutation(focusID string) {
+	updated, err := m.storage.ReadTasks()
+	if err != nil {
+		return
+	}
+	m.allTasks = updated
+	m.rebuild(focusID)
+	// update detailTask if viewing
+	if m.viewingDetail && m.detailTask != nil {
+		for _, t := range m.allTasks {
+			if t.ID == m.detailTask.ID {
+				m.detailTask = &t
+				break
+			}
+		}
+	}
+}
+
+func (m *Model) rebuild(focusID string) {
+	filtered := m.allTasks
+	if m.filterActive {
+		var tmp []models.Task
+		words := strings.Fields(strings.ToLower(m.filterValue))
+		for _, t := range filtered {
+			if m.filterKind == "Title Contains" {
+				lower := strings.ToLower(t.Title)
+				ok := true
+				for _, w := range words {
+					if !strings.Contains(lower, w) {
+						ok = false
+						break
+					}
+				}
+				if ok {
+					tmp = append(tmp, t)
+				}
+			} else {
+				tmp = append(tmp, t)
+			}
+		}
+		filtered = tmp
+	}
+	if m.sortActive {
+		switch m.sortKind {
+		case "Priority":
+			sort.Slice(filtered, func(i, j int) bool { return filtered[i].Priority > filtered[j].Priority })
+		case "Status":
+			sort.Slice(filtered, func(i, j int) bool { return filtered[i].Status < filtered[j].Status })
+		}
+	}
+	m.view = filtered
+	if focusID != "" {
+		for i, t := range m.view {
+			if t.ID == focusID {
+				m.cursor = i
+				break
+			}
+		}
+	}
+	if m.cursor >= len(m.view) {
+		m.cursor = len(m.view) - 1
+	}
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+}
+
+// View renders UI.
+func (m *Model) View() string {
+	if m.quitMessage != "" {
+		return m.quitMessage
+	}
+
+	if m.viewingDetail {
+		return m.renderDetailBox()
+	}
+
+	return m.renderTaskList()
+}
+
+func (m *Model) renderTaskList() string {
+	var content strings.Builder
+
+	// Header
+	header := "Tasks"
+	if m.filterActive {
+		header += fmt.Sprintf(" [filter: %s]", m.filterValue)
+	}
+	if m.sortActive {
+		header += fmt.Sprintf(" [sort: %s]", m.sortKind)
+	}
+	content.WriteString(lipgloss.NewStyle().Bold(true).Render(header) + "\n\n")
+
+	if len(m.view) == 0 {
+		content.WriteString("No tasks.\n")
+	} else {
+		visible := m.height - 8 // account for box border and padding
+		if visible < 1 {
+			visible = 1
+		}
+		start := 0
+		if m.cursor >= visible {
+			start = m.cursor - visible + 1
+		}
+		end := start + visible
+		if end > len(m.view) {
+			end = len(m.view)
+		}
+		for i := start; i < end; i++ {
+			t := m.view[i]
+
+			// Status indicator
+			statusIcon := "○"
+			if t.Status == "done" {
+				statusIcon = "✓"
+			} else if t.Status == "in-progress" {
+				statusIcon = "◐"
+			}
+
+			// Priority badge
+			priorityBadge := ""
+			switch t.Priority {
+			case "high":
+				priorityBadge = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("[H]")
+			case "medium":
+				priorityBadge = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("[M]")
+			case "low":
+				priorityBadge = lipgloss.NewStyle().Foreground(lipgloss.Color("248")).Render("[L]")
+			}
+
+			// Status label
+			statusLabel := ""
+			switch t.Status {
+			case "done":
+				statusLabel = lipgloss.NewStyle().Foreground(lipgloss.Color("28")).Render("Done")
+			case "in-progress":
+				statusLabel = lipgloss.NewStyle().Foreground(lipgloss.Color("33")).Render("In Progress")
+			case "todo":
+				statusLabel = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("Todo")
+			}
+
+			line := fmt.Sprintf("%s %s %-11s %s", statusIcon, priorityBadge, statusLabel, t.Title)
+			if i == m.cursor {
+				line = invert(line)
+			}
+			content.WriteString(line + "\n")
+		}
+	}
+
+	content.WriteString("\n")
+	content.WriteString(statusStyle.Render(" q:quit ↑/↓:nav x:toggle /:filter s:sort a:add e:edit "))
+
+	// Box style for task list
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("62")).
+		Padding(1, 2).
+		Width(m.width - 4)
+
+	return boxStyle.Render(content.String())
+}
+
+func (m *Model) renderDetailBox() string {
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("62")).
+		Padding(1, 2).
+		Width(60)
+
+	var content strings.Builder
+	content.WriteString(lipgloss.NewStyle().Bold(true).Render("Task Details") + "\n\n")
+
+	for i, fieldName := range fieldNames {
+		val := m.getFieldValue(fieldName)
+		line := fmt.Sprintf("%-10s: %s", fieldName, val)
+		if i == m.detailFieldIndex {
+			if m.editingField {
+				line = fmt.Sprintf("%-10s: %s", fieldName, m.editInput.View())
+			} else {
+				line = invert(line)
+			}
+		}
+		content.WriteString(line + "\n")
+	}
+
+	content.WriteString("\n")
+	if m.editingField {
+		content.WriteString(statusStyle.Render(" [Enter:save Esc:cancel] "))
+	} else {
+		content.WriteString(statusStyle.Render(" [↑/↓:navigate e:edit Esc:close] "))
+	}
+
+	box := boxStyle.Render(content.String())
+
+	// center the box
+	h := lipgloss.Height(box)
+	w := lipgloss.Width(box)
+	vPad := (m.height - h) / 2
+	hPad := (m.width - w) / 2
+	if vPad < 0 {
+		vPad = 0
+	}
+	if hPad < 0 {
+		hPad = 0
+	}
+
+	positioned := lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	return positioned
+}
+
+func invert(s string) string { return cursorStyle.Render(s) }
