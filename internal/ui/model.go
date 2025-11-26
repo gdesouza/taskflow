@@ -5,6 +5,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"taskflow/internal/config"
 	"taskflow/internal/models"
 	"taskflow/internal/storage"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"gopkg.in/yaml.v3"
 )
 
 // Model is the root Bubble Tea model for the new interactive UI.
@@ -51,6 +53,10 @@ type Model struct {
 	// Delete confirmation mode
 	confirmingDelete bool
 	taskToDelete     *models.Task
+
+	// Help screen mode
+	showingHelp      bool
+	helpScrollOffset int
 
 	// File polling
 	storagePath string
@@ -108,6 +114,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, pollFileCmd()
 	case tea.KeyMsg:
+		if m.showingHelp {
+			return m.handleHelpKey(msg)
+		}
 		if m.confirmingDelete {
 			return m.handleConfirmDeleteKey(msg)
 		}
@@ -251,12 +260,31 @@ func (m *Model) handleConfirmDeleteKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) handleHelpKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch k.String() {
+	case "esc", "q", "h", "?":
+		m.showingHelp = false
+		m.helpScrollOffset = 0 // reset scroll when closing
+	case "up", "k":
+		if m.helpScrollOffset > 0 {
+			m.helpScrollOffset--
+		}
+	case "down", "j":
+		m.helpScrollOffset++
+		// The render function will clamp this to valid bounds
+	}
+	return m, nil
+}
+
 func (m *Model) handleListKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := k.String()
 	switch key {
 	case "ctrl+c", "q":
 		m.quitMessage = "👋 Goodbye"
 		return m, tea.Quit
+	case "h", "?": // show help
+		m.showingHelp = true
+		return m, nil
 	case "up", "k":
 		if m.cursor > 0 {
 			m.cursor--
@@ -323,6 +351,24 @@ func (m *Model) handleListKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			current := m.view[m.cursor]
 			m.taskToDelete = &current
 			m.confirmingDelete = true
+		}
+	case "A": // archive task (Shift+A)
+		if len(m.view) > 0 {
+			current := m.view[m.cursor]
+			if err := m.archiveTask(&current); err == nil {
+				// Remove from allTasks
+				newTasks := make([]models.Task, 0, len(m.allTasks)-1)
+				for _, t := range m.allTasks {
+					if t.ID != current.ID {
+						newTasks = append(newTasks, t)
+					}
+				}
+				// Write to storage
+				if err := m.storage.WriteTasks(newTasks); err == nil {
+					m.allTasks = newTasks
+					m.rebuild("")
+				}
+			}
 		}
 	case "enter", "e": // open detail box
 		if len(m.view) > 0 {
@@ -513,10 +559,41 @@ func (m *Model) rebuild(focusID string) {
 	}
 }
 
+// archiveTask appends a task to the archive file.
+func (m *Model) archiveTask(task *models.Task) error {
+	// Create backup before modifying
+	if err := m.storage.Backup(); err != nil {
+		return fmt.Errorf("failed to create backup: %w", err)
+	}
+
+	archivePath := config.GetArchiveFilePath()
+	if archivePath == "" {
+		return fmt.Errorf("archive path not configured")
+	}
+
+	var existing models.TaskList
+	if data, err := os.ReadFile(archivePath); err == nil {
+		if len(data) > 0 {
+			_ = yaml.Unmarshal(data, &existing)
+		}
+	}
+
+	existing.Tasks = append(existing.Tasks, *task)
+	out, err := yaml.Marshal(existing)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(archivePath, out, 0644)
+}
+
 // View renders UI.
 func (m *Model) View() string {
 	if m.quitMessage != "" {
 		return m.quitMessage
+	}
+
+	if m.showingHelp {
+		return m.renderHelpBox()
 	}
 
 	if m.confirmingDelete {
@@ -604,7 +681,7 @@ func (m *Model) renderTaskList() string {
 	}
 
 	content.WriteString("\n")
-	content.WriteString(statusStyle.Render(" q:quit ↑/↓:nav x:toggle /:filter s:sort a:add d:delete e:edit "))
+	content.WriteString(statusStyle.Render(" q:quit h:help ↑/↓:nav x:toggle /:filter s:sort a:add d:delete A:archive e:edit "))
 
 	// Box style for task list
 	boxStyle := lipgloss.NewStyle().
@@ -745,6 +822,105 @@ func (m *Model) renderDeleteConfirmation() string {
 
 	content.WriteString("\n")
 	content.WriteString(statusStyle.Render(" [Y:confirm N/Esc:cancel] "))
+
+	box := boxStyle.Render(content.String())
+
+	// center the box
+	positioned := lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	return positioned
+}
+
+func (m *Model) renderHelpBox() string {
+	// Build help content as lines
+	helpLines := []string{
+		lipgloss.NewStyle().Bold(true).Render("Keyboard Shortcuts"),
+		"",
+		lipgloss.NewStyle().Bold(true).Render("Navigation:"),
+		"  ↑/k         Move cursor up",
+		"  ↓/j         Move cursor down",
+		"  h/?         Show this help screen",
+		"  q/Ctrl+C    Quit application",
+		"",
+		lipgloss.NewStyle().Bold(true).Render("Task Actions:"),
+		"  x           Toggle task status (todo → in-progress → done)",
+		"  a           Add new task",
+		"  e/Enter     Edit task details",
+		"  d           Delete task",
+		"  A (Shift+A) Archive task",
+		"",
+		lipgloss.NewStyle().Bold(true).Render("Filtering & Sorting:"),
+		"  /           Filter tasks by title",
+		"  s           Cycle sort (Priority → Status → None)",
+		"",
+		lipgloss.NewStyle().Bold(true).Render("Detail View:"),
+		"  ↑/↓         Navigate between fields",
+		"  e/Enter     Edit current field",
+		"  Esc         Close detail view",
+		"",
+		lipgloss.NewStyle().Bold(true).Render("Add Task View:"),
+		"  ↑/↓         Navigate between fields",
+		"  e/Enter     Edit current field",
+		"  Ctrl+S      Save task",
+		"  Esc         Cancel",
+	}
+
+	// Calculate available height for content (account for border, padding, and status line)
+	boxBorder := 2  // top and bottom border
+	boxPadding := 2 // top and bottom padding
+	statusLine := 2 // status bar and blank line
+	availableHeight := m.height - boxBorder - boxPadding - statusLine
+	if availableHeight < 5 {
+		availableHeight = 5 // minimum height
+	}
+
+	totalLines := len(helpLines)
+
+	// Clamp scroll offset
+	maxScroll := totalLines - availableHeight
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if m.helpScrollOffset > maxScroll {
+		m.helpScrollOffset = maxScroll
+	}
+	if m.helpScrollOffset < 0 {
+		m.helpScrollOffset = 0
+	}
+
+	// Slice visible lines
+	start := m.helpScrollOffset
+	end := start + availableHeight
+	if end > totalLines {
+		end = totalLines
+	}
+	visibleLines := helpLines[start:end]
+
+	// Build content
+	var content strings.Builder
+	for _, line := range visibleLines {
+		content.WriteString(line + "\n")
+	}
+
+	// Add scroll indicators and status
+	scrollInfo := ""
+	if maxScroll > 0 {
+		if m.helpScrollOffset > 0 && m.helpScrollOffset < maxScroll {
+			scrollInfo = " ↑↓ scroll "
+		} else if m.helpScrollOffset == 0 && maxScroll > 0 {
+			scrollInfo = " ↓ more "
+		} else if m.helpScrollOffset == maxScroll {
+			scrollInfo = " ↑ more "
+		}
+	}
+
+	content.WriteString("\n")
+	content.WriteString(statusStyle.Render(fmt.Sprintf(" [h/?/Esc/q: close]%s ", scrollInfo)))
+
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("62")).
+		Padding(1, 2).
+		Width(70)
 
 	box := boxStyle.Render(content.String())
 
