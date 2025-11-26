@@ -42,6 +42,12 @@ type Model struct {
 	editInput        textinput.Model
 	detailTask       *models.Task
 
+	// Add task mode
+	addingTask      bool
+	addFieldIndex   int
+	addEditingField bool
+	newTask         models.Task
+
 	// File polling
 	storagePath string
 	lastMod     time.Time
@@ -98,6 +104,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, pollFileCmd()
 	case tea.KeyMsg:
+		if m.addingTask {
+			return m.handleAddTaskKey(msg)
+		}
 		if m.viewingDetail {
 			return m.handleDetailKey(msg)
 		}
@@ -144,6 +153,64 @@ func (m *Model) handleDetailKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.editingField = true
 		m.editInput.SetValue(m.getFieldValue(fieldNames[m.detailFieldIndex]))
 		m.editInput.Focus()
+	}
+	return m, nil
+}
+
+func (m *Model) handleAddTaskKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.addEditingField {
+		// editing a field value
+		switch k.Type {
+		case tea.KeyEsc:
+			m.addEditingField = false
+			return m, nil
+		case tea.KeyEnter:
+			val := strings.TrimSpace(m.editInput.Value())
+			m.applyAddFieldEdit(val)
+			m.addEditingField = false
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.editInput, cmd = m.editInput.Update(k)
+		return m, cmd
+	}
+
+	// navigating add task form fields
+	switch k.String() {
+	case "esc":
+		// cancel adding task
+		m.addingTask = false
+		m.addFieldIndex = 0
+		m.newTask = models.Task{}
+		return m, nil
+	case "up", "k":
+		if m.addFieldIndex > 0 {
+			m.addFieldIndex--
+		}
+	case "down", "j":
+		if m.addFieldIndex < len(fieldNames)-1 {
+			m.addFieldIndex++
+		}
+	case "enter", "e":
+		// start editing current field
+		m.addEditingField = true
+		m.editInput.SetValue(m.getAddFieldValue(fieldNames[m.addFieldIndex]))
+		m.editInput.Focus()
+	case "ctrl+s":
+		// save the task
+		if m.newTask.Title == "" {
+			// Title is required, don't save
+			return m, nil
+		}
+		tasks := append(m.allTasks, m.newTask)
+		if err := m.storage.WriteTasks(tasks); err == nil {
+			m.allTasks = tasks
+			m.reloadAfterMutation(m.newTask.ID)
+		}
+		// reset add mode
+		m.addingTask = false
+		m.addFieldIndex = 0
+		m.newTask = models.Task{}
 	}
 	return m, nil
 }
@@ -199,19 +266,15 @@ func (m *Model) handleListKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.rebuild("")
 	case "a": // add task
-		var title string
-		fmt.Print("Title: ")
-		fmt.Scanln(&title)
-		title = strings.TrimSpace(title)
-		if title == "" {
-			break
+		// Initialize new task with defaults
+		m.newTask = models.Task{
+			ID:       fmt.Sprintf("%d", time.Now().UnixNano()),
+			Status:   "todo",
+			Priority: "medium",
 		}
-		newTask := models.Task{ID: fmt.Sprintf("%d", time.Now().UnixNano()), Title: title, Status: "todo", Priority: "medium"}
-		tasks := append(m.allTasks, newTask)
-		if err := m.storage.WriteTasks(tasks); err == nil {
-			m.allTasks = tasks
-			m.reloadAfterMutation(newTask.ID)
-		}
+		m.addingTask = true
+		m.addFieldIndex = 0
+		m.addEditingField = false
 	case "enter", "e": // open detail box
 		if len(m.view) > 0 {
 			// copy current task for detail view
@@ -276,6 +339,51 @@ func (m *Model) applyFieldEdit(val string) {
 	// persist to storage
 	m.storage.UpdateTask(m.allTasks, *m.detailTask)
 	m.reloadAfterMutation(m.detailTask.ID)
+}
+
+func (m *Model) getAddFieldValue(fieldName string) string {
+	switch fieldName {
+	case "Title":
+		return m.newTask.Title
+	case "Status":
+		return m.newTask.Status
+	case "Priority":
+		return m.newTask.Priority
+	case "Link":
+		return m.newTask.Link
+	case "Tags":
+		return strings.Join(m.newTask.Tags, ", ")
+	case "Notes":
+		return m.newTask.Notes
+	case "DueDate":
+		return m.newTask.DueDate
+	}
+	return ""
+}
+
+func (m *Model) applyAddFieldEdit(val string) {
+	fieldName := fieldNames[m.addFieldIndex]
+	// apply to newTask
+	switch fieldName {
+	case "Title":
+		m.newTask.Title = val
+	case "Status":
+		if val == "todo" || val == "in-progress" || val == "done" {
+			m.newTask.Status = val
+		}
+	case "Priority":
+		if val == "high" || val == "medium" || val == "low" {
+			m.newTask.Priority = val
+		}
+	case "Link":
+		m.newTask.Link = val
+	case "Tags":
+		m.newTask.Tags = splitTags(val)
+	case "Notes":
+		m.newTask.Notes = val
+	case "DueDate":
+		m.newTask.DueDate = val
+	}
 }
 
 func splitTags(s string) []string {
@@ -360,6 +468,10 @@ func (m *Model) rebuild(focusID string) {
 func (m *Model) View() string {
 	if m.quitMessage != "" {
 		return m.quitMessage
+	}
+
+	if m.addingTask {
+		return m.renderAddTaskBox()
 	}
 
 	if m.viewingDetail {
@@ -495,6 +607,61 @@ func (m *Model) renderDetailBox() string {
 		hPad = 0
 	}
 
+	positioned := lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	return positioned
+}
+
+func (m *Model) renderAddTaskBox() string {
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("62")).
+		Padding(1, 2).
+		Width(60)
+
+	var content strings.Builder
+	content.WriteString(lipgloss.NewStyle().Bold(true).Render("Add New Task") + "\n\n")
+
+	for i, fieldName := range fieldNames {
+		val := m.getAddFieldValue(fieldName)
+
+		// Add hints for specific fields
+		hint := ""
+		switch fieldName {
+		case "Status":
+			hint = " (todo/in-progress/done)"
+		case "Priority":
+			hint = " (high/medium/low)"
+		case "Tags":
+			hint = " (comma separated)"
+		case "DueDate":
+			hint = " (RFC3339 format)"
+		}
+
+		line := fmt.Sprintf("%-10s: %s%s", fieldName, val, hint)
+		if i == m.addFieldIndex {
+			if m.addEditingField {
+				line = fmt.Sprintf("%-10s: %s", fieldName, m.editInput.View())
+			} else {
+				line = invert(line)
+			}
+		}
+		content.WriteString(line + "\n")
+	}
+
+	content.WriteString("\n")
+	if m.addEditingField {
+		content.WriteString(statusStyle.Render(" [Enter:save Esc:cancel] "))
+	} else {
+		if m.newTask.Title == "" {
+			content.WriteString(statusStyle.Render(" [↑/↓:navigate e:edit Esc:cancel] (Title required to save) "))
+		} else {
+			content.WriteString(statusStyle.Render(" [↑/↓:navigate e:edit Ctrl+S:save Esc:cancel] "))
+		}
+	}
+
+	box := boxStyle.Render(content.String())
+
+	// center the box
 	positioned := lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 	return positioned
 }
