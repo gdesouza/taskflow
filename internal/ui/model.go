@@ -739,17 +739,20 @@ func (m *Model) renderTaskList() string {
 		}
 	}
 
-	content.WriteString("\n")
-	content.WriteString(statusStyle.Render(" q:quit h:help ↑/↓:nav x:toggle /:filter c:clear s:sort a:add d:delete A:archive e:edit "))
-
-	// Box style for task list
+	// Box style for task list - no bottom padding
 	boxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("62")).
-		Padding(1, 2).
+		Padding(1, 2, 0, 2). // top, right, bottom, left - no bottom padding
 		Width(m.width - 4)
 
-	return boxStyle.Render(content.String())
+	taskBox := boxStyle.Render(content.String())
+
+	// Status bar - positioned adjacent to bottom border
+	statusBar := statusStyle.Render(" q:quit  h:help  /:filter  s:sort ")
+
+	// Combine task box and status bar
+	return taskBox + "\n" + statusBar
 }
 
 func (m *Model) renderDetailBox() string {
