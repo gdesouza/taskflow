@@ -23,3 +23,6 @@ blocks:
             - 'curl -Os https://uploader.codecov.io/latest/linux/codecov'
             - chmod +x codecov
             - ./codecov
+      env_vars:
+        - name: CODECOV_TOKEN
+          value: 8abb32d0-7e70-4516-9d06-ce6617a55dd8
