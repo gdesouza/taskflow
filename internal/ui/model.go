@@ -100,7 +100,7 @@ func (m *Model) Init() tea.Cmd {
 
 	m.filterInput = textinput.New()
 	m.filterInput.Prompt = "Filter: "
-	m.filterInput.Placeholder = "Enter text to filter tasks..."
+	m.filterInput.Placeholder = "Search title or tags..."
 
 	return tea.Batch(pollFileCmd(), tea.EnterAltScreen)
 }
@@ -555,10 +555,27 @@ func (m *Model) rebuild(focusID string) {
 		words := strings.Fields(strings.ToLower(m.filterValue))
 		for _, t := range filtered {
 			if m.filterKind == "Title Contains" {
-				lower := strings.ToLower(t.Title)
+				// Search in title
+				titleLower := strings.ToLower(t.Title)
+
+				// Search in tags
+				tagsLower := make([]string, len(t.Tags))
+				for i, tag := range t.Tags {
+					tagsLower[i] = strings.ToLower(tag)
+				}
+
+				// Check if all words are found in either title or tags
 				ok := true
 				for _, w := range words {
-					if !strings.Contains(lower, w) {
+					foundInTitle := strings.Contains(titleLower, w)
+					foundInTags := false
+					for _, tag := range tagsLower {
+						if strings.Contains(tag, w) {
+							foundInTags = true
+							break
+						}
+					}
+					if !foundInTitle && !foundInTags {
 						ok = false
 						break
 					}
@@ -881,7 +898,7 @@ func (m *Model) renderFilterInput() string {
 
 	var content strings.Builder
 	content.WriteString(lipgloss.NewStyle().Bold(true).Render("Filter Tasks") + "\n\n")
-	content.WriteString("Enter text to filter tasks by title:\n\n")
+	content.WriteString("Enter text to filter tasks by title or tags:\n\n")
 	content.WriteString(m.filterInput.View() + "\n\n")
 	content.WriteString(statusStyle.Render(" [Enter:apply Esc:cancel] "))
 
@@ -911,7 +928,7 @@ func (m *Model) renderHelpBox() string {
 		"  A (Shift+A) Archive task",
 		"",
 		lipgloss.NewStyle().Bold(true).Render("Filtering & Sorting:"),
-		"  /           Filter tasks by title",
+		"  /           Filter tasks by title or tags",
 		"  c           Clear filter",
 		"  s           Cycle sort (Priority → Status → None)",
 		"",
