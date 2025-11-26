@@ -265,13 +265,19 @@ func (m *Model) handleListKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.cursor < len(m.view)-1 {
 			m.cursor++
 		}
-	case "x": // toggle done
+	case "x": // toggle status
 		if len(m.view) > 0 {
 			t := &m.view[m.cursor]
-			if t.Status == "done" {
-				t.Status = "todo"
-			} else {
+			// Cycle through: todo -> in-progress -> done -> todo
+			switch t.Status {
+			case "todo":
+				t.Status = "in-progress"
+			case "in-progress":
 				t.Status = "done"
+			case "done":
+				t.Status = "todo"
+			default:
+				t.Status = "todo"
 			}
 			m.storage.UpdateTask(m.allTasks, *t)
 			m.reloadAfterMutation(t.ID)
