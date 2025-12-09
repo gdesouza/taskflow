@@ -40,17 +40,25 @@ type Model struct {
 	sortKind   string // Priority | Status
 
 	// Detail box edit mode
-	viewingDetail    bool
-	detailFieldIndex int
-	editingField     bool
-	editInput        textinput.Model
-	detailTask       *models.Task
+	viewingDetail     bool
+	detailFieldIndex  int
+	editingField      bool
+	editInput         textinput.Model
+	detailTask        *models.Task
+	selectingStatus   bool // for status dropdown
+	statusCursor      int
+	selectingPriority bool // for priority dropdown
+	priorityCursor    int
 
 	// Add task mode
-	addingTask      bool
-	addFieldIndex   int
-	addEditingField bool
-	newTask         models.Task
+	addingTask           bool
+	addFieldIndex        int
+	addEditingField      bool
+	newTask              models.Task
+	addSelectingStatus   bool // for status dropdown in add mode
+	addStatusCursor      int
+	addSelectingPriority bool // for priority dropdown in add mode
+	addPriorityCursor    int
 
 	// Delete confirmation mode
 	confirmingDelete bool
@@ -69,6 +77,8 @@ type Model struct {
 }
 
 var fieldNames = []string{"Title", "Status", "Priority", "Link", "Tags", "Notes", "DueDate"}
+var statusOptions = []string{"to-do", "in-progress", "on-hold", "done"}
+var priorityOptions = []string{"high", "medium", "low"}
 
 // New constructs a new Model.
 func New(s *storage.Storage, initialHash string, storagePath string) *Model {
@@ -142,6 +152,54 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleDetailKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Selecting status from dropdown
+	if m.selectingStatus {
+		switch k.String() {
+		case "esc":
+			m.selectingStatus = false
+			return m, nil
+		case "up", "k":
+			if m.statusCursor > 0 {
+				m.statusCursor--
+			}
+		case "down", "j":
+			if m.statusCursor < len(statusOptions)-1 {
+				m.statusCursor++
+			}
+		case "enter":
+			// Apply selected status
+			m.detailTask.Status = statusOptions[m.statusCursor]
+			m.storage.UpdateTask(m.allTasks, *m.detailTask)
+			m.reloadAfterMutation(m.detailTask.ID)
+			m.selectingStatus = false
+		}
+		return m, nil
+	}
+
+	// Selecting priority from dropdown
+	if m.selectingPriority {
+		switch k.String() {
+		case "esc":
+			m.selectingPriority = false
+			return m, nil
+		case "up", "k":
+			if m.priorityCursor > 0 {
+				m.priorityCursor--
+			}
+		case "down", "j":
+			if m.priorityCursor < len(priorityOptions)-1 {
+				m.priorityCursor++
+			}
+		case "enter":
+			// Apply selected priority
+			m.detailTask.Priority = priorityOptions[m.priorityCursor]
+			m.storage.UpdateTask(m.allTasks, *m.detailTask)
+			m.reloadAfterMutation(m.detailTask.ID)
+			m.selectingPriority = false
+		}
+		return m, nil
+	}
+
 	if m.editingField {
 		// editing a field value
 		switch k.Type {
@@ -176,14 +234,82 @@ func (m *Model) handleDetailKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "enter", "e":
 		// start editing current field
-		m.editingField = true
-		m.editInput.SetValue(m.getFieldValue(fieldNames[m.detailFieldIndex]))
-		m.editInput.Focus()
+		fieldName := fieldNames[m.detailFieldIndex]
+		if fieldName == "Status" {
+			// Show status dropdown
+			m.selectingStatus = true
+			// Set cursor to current status
+			for i, status := range statusOptions {
+				if status == m.detailTask.Status {
+					m.statusCursor = i
+					break
+				}
+			}
+		} else if fieldName == "Priority" {
+			// Show priority dropdown
+			m.selectingPriority = true
+			// Set cursor to current priority
+			for i, priority := range priorityOptions {
+				if priority == m.detailTask.Priority {
+					m.priorityCursor = i
+					break
+				}
+			}
+		} else {
+			// Normal text editing for other fields
+			m.editingField = true
+			m.editInput.SetValue(m.getFieldValue(fieldName))
+			m.editInput.Focus()
+		}
 	}
 	return m, nil
 }
 
 func (m *Model) handleAddTaskKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Selecting status from dropdown
+	if m.addSelectingStatus {
+		switch k.String() {
+		case "esc":
+			m.addSelectingStatus = false
+			return m, nil
+		case "up", "k":
+			if m.addStatusCursor > 0 {
+				m.addStatusCursor--
+			}
+		case "down", "j":
+			if m.addStatusCursor < len(statusOptions)-1 {
+				m.addStatusCursor++
+			}
+		case "enter":
+			// Apply selected status
+			m.newTask.Status = statusOptions[m.addStatusCursor]
+			m.addSelectingStatus = false
+		}
+		return m, nil
+	}
+
+	// Selecting priority from dropdown
+	if m.addSelectingPriority {
+		switch k.String() {
+		case "esc":
+			m.addSelectingPriority = false
+			return m, nil
+		case "up", "k":
+			if m.addPriorityCursor > 0 {
+				m.addPriorityCursor--
+			}
+		case "down", "j":
+			if m.addPriorityCursor < len(priorityOptions)-1 {
+				m.addPriorityCursor++
+			}
+		case "enter":
+			// Apply selected priority
+			m.newTask.Priority = priorityOptions[m.addPriorityCursor]
+			m.addSelectingPriority = false
+		}
+		return m, nil
+	}
+
 	if m.addEditingField {
 		// editing a field value
 		switch k.Type {
@@ -219,9 +345,33 @@ func (m *Model) handleAddTaskKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "enter", "e":
 		// start editing current field
-		m.addEditingField = true
-		m.editInput.SetValue(m.getAddFieldValue(fieldNames[m.addFieldIndex]))
-		m.editInput.Focus()
+		fieldName := fieldNames[m.addFieldIndex]
+		if fieldName == "Status" {
+			// Show status dropdown
+			m.addSelectingStatus = true
+			// Set cursor to current status
+			for i, status := range statusOptions {
+				if status == m.newTask.Status {
+					m.addStatusCursor = i
+					break
+				}
+			}
+		} else if fieldName == "Priority" {
+			// Show priority dropdown
+			m.addSelectingPriority = true
+			// Set cursor to current priority
+			for i, priority := range priorityOptions {
+				if priority == m.newTask.Priority {
+					m.addPriorityCursor = i
+					break
+				}
+			}
+		} else {
+			// Normal text editing for other fields
+			m.addEditingField = true
+			m.editInput.SetValue(m.getAddFieldValue(fieldName))
+			m.editInput.Focus()
+		}
 	case "ctrl+s":
 		// save the task
 		if m.newTask.Title == "" {
@@ -335,16 +485,18 @@ func (m *Model) handleListKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "x": // toggle status
 		if len(m.view) > 0 {
 			t := &m.view[m.cursor]
-			// Cycle through: todo -> in-progress -> done -> todo
+			// Cycle through: to-do -> in-progress -> on-hold -> done -> to-do
 			switch t.Status {
-			case "todo":
+			case "to-do":
 				t.Status = "in-progress"
 			case "in-progress":
+				t.Status = "on-hold"
+			case "on-hold":
 				t.Status = "done"
 			case "done":
-				t.Status = "todo"
+				t.Status = "to-do"
 			default:
-				t.Status = "todo"
+				t.Status = "to-do"
 			}
 			m.storage.UpdateTask(m.allTasks, *t)
 			m.reloadAfterMutation(t.ID)
@@ -377,7 +529,7 @@ func (m *Model) handleListKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Initialize new task with defaults
 		m.newTask = models.Task{
 			ID:       fmt.Sprintf("%d", time.Now().UnixNano()),
-			Status:   "todo",
+			Status:   "to-do",
 			Priority: "medium",
 		}
 		m.addingTask = true
@@ -453,13 +605,11 @@ func (m *Model) applyFieldEdit(val string) {
 	case "Title":
 		m.detailTask.Title = val
 	case "Status":
-		if val == "todo" || val == "in-progress" || val == "done" {
-			m.detailTask.Status = val
-		}
+		// Status is now handled via dropdown, not text input
+		m.detailTask.Status = val
 	case "Priority":
-		if val == "high" || val == "medium" || val == "low" {
-			m.detailTask.Priority = val
-		}
+		// Priority is now handled via dropdown, not text input
+		m.detailTask.Priority = val
 	case "Link":
 		m.detailTask.Link = val
 	case "Tags":
@@ -501,13 +651,11 @@ func (m *Model) applyAddFieldEdit(val string) {
 	case "Title":
 		m.newTask.Title = val
 	case "Status":
-		if val == "todo" || val == "in-progress" || val == "done" {
-			m.newTask.Status = val
-		}
+		// Status is now handled via dropdown, not text input
+		m.newTask.Status = val
 	case "Priority":
-		if val == "high" || val == "medium" || val == "low" {
-			m.newTask.Priority = val
-		}
+		// Priority is now handled via dropdown, not text input
+		m.newTask.Priority = val
 	case "Link":
 		m.newTask.Link = val
 	case "Tags":
@@ -707,6 +855,8 @@ func (m *Model) renderTaskList() string {
 				statusIcon = "✓"
 			} else if t.Status == "in-progress" {
 				statusIcon = "◐"
+			} else if t.Status == "on-hold" {
+				statusIcon = "⏸"
 			}
 
 			// Priority badge
@@ -727,8 +877,13 @@ func (m *Model) renderTaskList() string {
 				statusLabel = lipgloss.NewStyle().Foreground(lipgloss.Color("28")).Render("Done")
 			case "in-progress":
 				statusLabel = lipgloss.NewStyle().Foreground(lipgloss.Color("33")).Render("In Progress")
-			case "todo":
-				statusLabel = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("Todo")
+			case "on-hold":
+				statusLabel = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("On Hold")
+			case "to-do":
+				statusLabel = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("To-Do")
+			default:
+				// Handle legacy "todo" status
+				statusLabel = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("To-Do")
 			}
 
 			line := fmt.Sprintf("%s %s %-11s %s", statusIcon, priorityBadge, statusLabel, t.Title)
@@ -765,24 +920,51 @@ func (m *Model) renderDetailBox() string {
 	var content strings.Builder
 	content.WriteString(lipgloss.NewStyle().Bold(true).Render("Task Details") + "\n\n")
 
-	for i, fieldName := range fieldNames {
-		val := m.getFieldValue(fieldName)
-		line := fmt.Sprintf("%-10s: %s", fieldName, val)
-		if i == m.detailFieldIndex {
-			if m.editingField {
-				line = fmt.Sprintf("%-10s: %s", fieldName, m.editInput.View())
-			} else {
+	// If selecting status, show dropdown
+	if m.selectingStatus {
+		content.WriteString(lipgloss.NewStyle().Bold(true).Render("Select Status:") + "\n\n")
+		for i, status := range statusOptions {
+			line := "  " + status
+			if i == m.statusCursor {
 				line = invert(line)
 			}
+			content.WriteString(line + "\n")
 		}
-		content.WriteString(line + "\n")
-	}
-
-	content.WriteString("\n")
-	if m.editingField {
-		content.WriteString(statusStyle.Render(" [Enter:save Esc:cancel] "))
+		content.WriteString("\n")
+		content.WriteString(statusStyle.Render(" [↑/↓:navigate Enter:select Esc:cancel] "))
+	} else if m.selectingPriority {
+		// If selecting priority, show dropdown
+		content.WriteString(lipgloss.NewStyle().Bold(true).Render("Select Priority:") + "\n\n")
+		for i, priority := range priorityOptions {
+			line := "  " + priority
+			if i == m.priorityCursor {
+				line = invert(line)
+			}
+			content.WriteString(line + "\n")
+		}
+		content.WriteString("\n")
+		content.WriteString(statusStyle.Render(" [↑/↓:navigate Enter:select Esc:cancel] "))
 	} else {
-		content.WriteString(statusStyle.Render(" [↑/↓:navigate e:edit Esc:close] "))
+		// Normal detail view
+		for i, fieldName := range fieldNames {
+			val := m.getFieldValue(fieldName)
+			line := fmt.Sprintf("%-10s: %s", fieldName, val)
+			if i == m.detailFieldIndex {
+				if m.editingField {
+					line = fmt.Sprintf("%-10s: %s", fieldName, m.editInput.View())
+				} else {
+					line = invert(line)
+				}
+			}
+			content.WriteString(line + "\n")
+		}
+
+		content.WriteString("\n")
+		if m.editingField {
+			content.WriteString(statusStyle.Render(" [Enter:save Esc:cancel] "))
+		} else {
+			content.WriteString(statusStyle.Render(" [↑/↓:navigate e:edit Esc:close] "))
+		}
 	}
 
 	box := boxStyle.Render(content.String())
@@ -813,41 +995,68 @@ func (m *Model) renderAddTaskBox() string {
 	var content strings.Builder
 	content.WriteString(lipgloss.NewStyle().Bold(true).Render("Add New Task") + "\n\n")
 
-	for i, fieldName := range fieldNames {
-		val := m.getAddFieldValue(fieldName)
-
-		// Add hints for specific fields
-		hint := ""
-		switch fieldName {
-		case "Status":
-			hint = " (todo/in-progress/done)"
-		case "Priority":
-			hint = " (high/medium/low)"
-		case "Tags":
-			hint = " (comma separated)"
-		case "DueDate":
-			hint = " (RFC3339 format)"
-		}
-
-		line := fmt.Sprintf("%-10s: %s%s", fieldName, val, hint)
-		if i == m.addFieldIndex {
-			if m.addEditingField {
-				line = fmt.Sprintf("%-10s: %s", fieldName, m.editInput.View())
-			} else {
+	// If selecting status, show dropdown
+	if m.addSelectingStatus {
+		content.WriteString(lipgloss.NewStyle().Bold(true).Render("Select Status:") + "\n\n")
+		for i, status := range statusOptions {
+			line := "  " + status
+			if i == m.addStatusCursor {
 				line = invert(line)
 			}
+			content.WriteString(line + "\n")
 		}
-		content.WriteString(line + "\n")
-	}
-
-	content.WriteString("\n")
-	if m.addEditingField {
-		content.WriteString(statusStyle.Render(" [Enter:save Esc:cancel] "))
+		content.WriteString("\n")
+		content.WriteString(statusStyle.Render(" [↑/↓:navigate Enter:select Esc:cancel] "))
+	} else if m.addSelectingPriority {
+		// If selecting priority, show dropdown
+		content.WriteString(lipgloss.NewStyle().Bold(true).Render("Select Priority:") + "\n\n")
+		for i, priority := range priorityOptions {
+			line := "  " + priority
+			if i == m.addPriorityCursor {
+				line = invert(line)
+			}
+			content.WriteString(line + "\n")
+		}
+		content.WriteString("\n")
+		content.WriteString(statusStyle.Render(" [↑/↓:navigate Enter:select Esc:cancel] "))
 	} else {
-		if m.newTask.Title == "" {
-			content.WriteString(statusStyle.Render(" [↑/↓:navigate e:edit Esc:cancel] (Title required to save) "))
+		// Normal add task form
+		for i, fieldName := range fieldNames {
+			val := m.getAddFieldValue(fieldName)
+
+			// Add hints for specific fields
+			hint := ""
+			switch fieldName {
+			case "Status":
+				hint = " (press Enter to select)"
+			case "Priority":
+				hint = " (press Enter to select)"
+			case "Tags":
+				hint = " (comma separated)"
+			case "DueDate":
+				hint = " (RFC3339 format)"
+			}
+
+			line := fmt.Sprintf("%-10s: %s%s", fieldName, val, hint)
+			if i == m.addFieldIndex {
+				if m.addEditingField {
+					line = fmt.Sprintf("%-10s: %s", fieldName, m.editInput.View())
+				} else {
+					line = invert(line)
+				}
+			}
+			content.WriteString(line + "\n")
+		}
+
+		content.WriteString("\n")
+		if m.addEditingField {
+			content.WriteString(statusStyle.Render(" [Enter:save Esc:cancel] "))
 		} else {
-			content.WriteString(statusStyle.Render(" [↑/↓:navigate e:edit Ctrl+S:save Esc:cancel] "))
+			if m.newTask.Title == "" {
+				content.WriteString(statusStyle.Render(" [↑/↓:navigate e:edit Esc:cancel] (Title required to save) "))
+			} else {
+				content.WriteString(statusStyle.Render(" [↑/↓:navigate e:edit Ctrl+S:save Esc:cancel] "))
+			}
 		}
 	}
 
@@ -924,7 +1133,7 @@ func (m *Model) renderHelpBox() string {
 		"  q/Ctrl+C    Quit application",
 		"",
 		lipgloss.NewStyle().Bold(true).Render("Task Actions:"),
-		"  x           Toggle task status (todo → in-progress → done)",
+		"  x           Toggle task status (to-do → in-progress → on-hold → done)",
 		"  a           Add new task",
 		"  e/Enter     Edit task details",
 		"  d           Delete task",

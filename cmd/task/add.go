@@ -37,7 +37,7 @@ var AddCmd = &cobra.Command{
 			ID:        uuid.New().String(),
 			Title:     strings.Join(args, " "),
 			DueDate:   dueDate,
-			Status:    "todo",
+			Status:    "to-do",
 			Priority:  "medium",
 			UpdatedAt: time.Now().UTC().Format(time.RFC3339),
 		}
